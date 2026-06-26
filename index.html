@@ -95,11 +95,15 @@
             const exportData = () => {
                 let exportText = "// 請將此內容覆蓋對應的 vocab_NX.js\nwindow.VOCAB_DB = window.VOCAB_DB || {};\n";
                 selectedLevels.forEach(level => {
-                    let updatedList = window.VOCAB_DB[level].map(v => ({
-                        ...v,
-                        correct: stats[v.id]?.correct || 0,
-                        wrong: stats[v.id]?.wrong || 0
-                    }));
+                    let updatedList = window.VOCAB_DB[level].map(v => {
+                        // 修正：使用舊式寫法避開 SyntaxError
+                        const stat = stats[v.id] || { correct: 0, wrong: 0 };
+                        return {
+                            ...v,
+                            correct: stat.correct || 0,
+                            wrong: stat.wrong || 0
+                        };
+                    });
                     exportText += `window.VOCAB_DB.${level} = ${JSON.stringify(updatedList, null, 4)};\n\n`;
                 });
                 const blob = new Blob([exportText], { type: "text/javascript;charset=utf-8" });
@@ -118,12 +122,12 @@
 
                 let pool = [...currentVocabList];
                 if (examConfig.mode === 'mistakes') {
-                    pool = pool.filter(v => (stats[v.id]?.wrong || 0) > 0);
+                    pool = pool.filter(v => ((stats[v.id] && stats[v.id].wrong) || 0) > 0);
                     if (pool.length < 4) { alert("答錯題目太少，無法進行錯題模式！(至少需4題)"); return; }
                 } else if (examConfig.mode === 'weighted') {
                     pool.sort((a, b) => {
-                        const rateA = (stats[a.id]?.wrong || 0) / ((stats[a.id]?.correct || 0) + (stats[a.id]?.wrong || 0) + 1);
-                        const rateB = (stats[b.id]?.wrong || 0) / ((stats[b.id]?.correct || 0) + (stats[b.id]?.wrong || 0) + 1);
+                        const rateA = ((stats[a.id] && stats[a.id].wrong) || 0) / (((stats[a.id] && stats[a.id].correct) || 0) + ((stats[a.id] && stats[a.id].wrong) || 0) + 1);
+                        const rateB = ((stats[b.id] && stats[b.id].wrong) || 0) / (((stats[b.id] && stats[b.id].correct) || 0) + ((stats[b.id] && stats[b.id].wrong) || 0) + 1);
                         return (Math.random() * (1 - rateA)) - (Math.random() * (1 - rateB));
                     });
                 } else {
