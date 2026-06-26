@@ -53,8 +53,21 @@
             const availableLevels = window.VOCAB_DB ? Object.keys(window.VOCAB_DB).sort() : [];
             const [selectedLevels, setSelectedLevels] = useState(availableLevels.length > 0 ? [availableLevels[availableLevels.length-1]] : []);
             const [currentTab, setCurrentTab] = useState('study'); 
-            
+
             const [studyIndex, setStudyIndex] = useState(0);
+
+            // 監聽瀏覽進度
+            useEffect(() => {
+                if (currentVocabList.length > 0) {
+                    setViewedIds(prev => {
+                        const next = new Set(prev);
+                        next.add(currentVocabList[studyIndex].id);
+                        return next;
+                    });
+                }
+            }, [studyIndex, currentVocabList]);
+
+            const [viewedIds, setViewedIds] = useState(new Set());
             const [hideKana, setHideKana] = useState(false);
             const [hideKanji, setHideKanji] = useState(false);
             const [hideMeaning, setHideMeaning] = useState(false);
@@ -219,8 +232,18 @@
                             return (
                                 <div className="flex flex-col flex-1">
                                     <div className="flex justify-between text-xs text-slate-500 mb-2">
-                                        <span>進度: {studyIndex+1}/{currentVocabList.length}</span>
-                                        <span>錯題率: <b className="text-red-500">{errRate}%</b></span>
+                                        <span>
+                                            {(() => {
+                                                const total = currentVocabList.length;
+                                                // 每次計算已瀏覽過的數量
+                                                const viewedCount = viewedIds.size;
+                                                const percentage = total > 0 ? Math.round((viewedCount / total) * 100) : 0;
+                                                return `${percentage}% (${viewedCount}/${total})`;
+                                            })()}
+                                        </span>
+                                        <span>
+                                            錯題率: <b className="text-red-500">{errRate}%</b>
+                                        </span>
                                     </div>
 
                                     <div className="bg-white rounded-2xl shadow-sm p-6 text-center relative mb-4">
@@ -249,19 +272,32 @@
                                         <button onClick={() => setHideKana(!hideKana)} className={`py-2 text-xs rounded-lg border font-bold ${hideKana?'bg-slate-800 text-white':'bg-white text-slate-600'}`}>遮假名</button>
                                         <button onClick={() => setHideMeaning(!hideMeaning)} className={`py-2 text-xs rounded-lg border font-bold ${hideMeaning?'bg-slate-800 text-white':'bg-white text-slate-600'}`}>遮中文</button>
                                     </div>
-
-                                    <div className="grid grid-cols-2 gap-3 mb-6">
-                                        <button onClick={() => {updateStats(word.id, false); setStudyIndex((studyIndex+1)%currentVocabList.length);}} className="py-3 bg-red-50 text-red-600 rounded-xl font-bold border border-red-100 shadow-sm"><i className="fas fa-times mr-2"></i>忘記了</button>
-                                        <button onClick={() => {updateStats(word.id, true); setStudyIndex((studyIndex+1)%currentVocabList.length);}} className="py-3 bg-green-50 text-green-600 rounded-xl font-bold border border-green-100 shadow-sm"><i className="fas fa-check mr-2"></i>記住了</button>
-                                    </div>
                                     
-                                    <div className="mt-auto flex justify-between items-center px-4 py-2 bg-white rounded-full shadow-sm border">
-                                        <button onClick={()=>setStudyIndex((studyIndex-1+currentVocabList.length)%currentVocabList.length)} className="p-2 text-slate-400"><i className="fas fa-chevron-left text-lg"></i></button>
-                                        <button onClick={()=>setIsRandomStudy(!isRandomStudy)} className={`text-xs font-bold flex flex-col items-center ${isRandomStudy?'text-blue-500':'text-slate-400'}`}>
-                                            <i className="fas fa-random mb-1 text-lg"></i>
-                                            {isRandomStudy?'隨機':'循序'}
+                                    <div className="mt-auto flex items-center justify-between w-full gap-2 px-2 py-4">
+                                        {/* 上一頁按鈕 */}
+                                        <button 
+                                            onClick={() => setStudyIndex((studyIndex - 1 + currentVocabList.length) % currentVocabList.length)} 
+                                            className="flex-1 h-16 bg-white rounded-xl shadow-sm border border-slate-200 transition-all duration-200 hover:scale-[1.02] active:scale-95 text-slate-400 hover:text-slate-800 flex items-center justify-center"
+                                        >
+                                            <i className="fas fa-chevron-left text-xl"></i>
                                         </button>
-                                        <button onClick={()=>setStudyIndex(isRandomStudy ? Math.floor(Math.random()*currentVocabList.length) : (studyIndex+1)%currentVocabList.length)} className="p-2 text-slate-400"><i className="fas fa-chevron-right text-lg"></i></button>
+
+                                        {/* 隨機/循序按鈕 */}
+                                        <button 
+                                            onClick={() => setIsRandomStudy(!isRandomStudy)} 
+                                            className={`flex-1 h-16 rounded-xl shadow-sm border transition-all duration-200 hover:scale-[1.02] active:scale-95 text-xs font-bold flex flex-col items-center justify-center ${isRandomStudy ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-slate-400 border-slate-200'}`}
+                                        >
+                                            <i className="fas fa-random text-lg mb-0.5"></i>
+                                            {isRandomStudy ? '隨機' : '循序'}
+                                        </button>
+
+                                        {/* 下一頁按鈕 */}
+                                        <button 
+                                            onClick={() => setStudyIndex(isRandomStudy ? Math.floor(Math.random() * currentVocabList.length) : (studyIndex + 1) % currentVocabList.length)} 
+                                            className="flex-1 h-16 bg-white rounded-xl shadow-sm border border-slate-200 transition-all duration-200 hover:scale-[1.02] active:scale-95 text-slate-400 hover:text-slate-800 flex items-center justify-center"
+                                        >
+                                            <i className="fas fa-chevron-right text-xl"></i>
+                                        </button>
                                     </div>
                                 </div>
                             );
