@@ -348,8 +348,10 @@
                 }
             };
 
-            const speak = async (targetWord, isFull = false) => {
+            // 定義一個簡單的播放器
+            const speak = (targetWord, isFull = false) => {
                 if (isSpeaking) return;
+                setIsSpeaking(true);
 
                 const exampleText = targetWord.example
                     ? targetWord.example.split(' (')[0].replace(/\[.*?\]/g, '').trim()
@@ -357,22 +359,15 @@
                 const textToSpeak = isFull ? `${targetWord.kana}。 ${exampleText}` : targetWord.kana;
 
                 const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ja&client=tw-ob&q=${encodeURIComponent(textToSpeak)}`;
+
+                // 關鍵：使用 HTML5 Audio，這是對 Google API 最友善的播放方式
                 const audio = new Audio(url);
 
-                // 核心關鍵：iOS 需要在使用者動作的「當下」呼叫 play
-                // 我們嘗試在一個非同步的 promise 執行前就建立 audio 物件
-                setIsSpeaking(true);
-
-                try {
-                    // 為了 iOS，我們確保 play 是直接在點擊事件後的第一時間執行
-                    await audio.play();
-                } catch (error) {
-                    console.error("iOS 播放被阻擋:", error);
-                    // 如果被阻擋，嘗試觸發一個全域的解鎖提示（如果你的介面有地方可以放提示）
-                    // 或者給予更明顯的 UI 回饋
+                // 確保播放器行為
+                audio.play().catch(err => {
+                    console.error("播放被攔截，請確認是否有使用者觸發:", err);
                     setIsSpeaking(false);
-                    // 這裡可以選擇是否要彈出一個更友善的視窗告知使用者
-                }
+                });
 
                 audio.onended = () => setIsSpeaking(false);
                 audio.onerror = () => setIsSpeaking(false);
