@@ -9,14 +9,14 @@
     <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
+
     <!-- 自動讀取同資料夾下的單字庫 (找不到檔案時會在背景略過，不會當機) -->
     <script src="vocab_N1.js" onerror="console.log('尚未建立 N1')"></script>
     <script src="vocab_N2.js" onerror="console.log('尚未建立 N2')"></script>
     <script src="vocab_N3.js" onerror="console.log('尚未建立 N3')"></script>
     <script src="vocab_N4.js" onerror="console.log('尚未建立 N4')"></script>
     <script src="vocab_N5.js" onerror="console.log('尚未建立 N5')"></script>
-    
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap');
         body { font-family: 'Noto Sans JP', 'Microsoft JhengHei', sans-serif; }
@@ -39,7 +39,7 @@
                     return {};
                 }
             };
-            
+
             const [stats, setStats] = useState(loadStats());
 
             useEffect(() => {
@@ -52,7 +52,7 @@
 
             const availableLevels = window.VOCAB_DB ? Object.keys(window.VOCAB_DB).sort() : [];
             const [selectedLevels, setSelectedLevels] = useState(availableLevels.length > 0 ? [availableLevels[availableLevels.length-1]] : []);
-            const [currentTab, setCurrentTab] = useState('study'); 
+            const [currentTab, setCurrentTab] = useState('study');
 
             const [studyIndex, setStudyIndex] = useState(0);
 
@@ -67,7 +67,27 @@
                 }
             }, [studyIndex, currentVocabList]);
 
-            const [viewedIds, setViewedIds] = useState(new Set());
+            // 讀取本地的瀏覽紀錄 (因為 Set 不能直接被 JSON.parse，所以要轉換陣列)
+            const loadViewedIds = () => {
+                try {
+                    const stored = JSON.parse(localStorage.getItem('viewedVocabIds'));
+                    return stored ? new Set(stored) : new Set();
+                } catch (e) {
+                    return new Set();
+                }
+            };
+
+            const [viewedIds, setViewedIds] = useState(loadViewedIds());
+
+            // 當 viewedIds 改變時，自動寫入 localStorage
+            useEffect(() => {
+                try {
+                    localStorage.setItem('viewedVocabIds', JSON.stringify(Array.from(viewedIds)));
+                } catch (e) {
+                    console.warn("無法寫入瀏覽紀錄");
+                }
+            }, [viewedIds]);
+
             const [hideKana, setHideKana] = useState(false);
             const [hideKanji, setHideKanji] = useState(false);
             const [hideMeaning, setHideMeaning] = useState(false);
@@ -88,11 +108,193 @@
                 return list;
             }, [selectedLevels]);
 
-            const speak = (text) => {
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.lang = 'ja-JP';
-                utterance.rate = 0.8;
-                window.speechSynthesis.speak(utterance);
+            // --- 聽力模式專用狀態、清單與快取 ---
+            const [listeningIndex, setListeningIndex] = useState(0); // 播放清單的 index
+            const [isPlaying, setIsPlaying] = useState(false);
+            const [isStopped, setIsStopped] = useState(true); // 新增：區分「暫停」與「停止」
+            const [isListeningRandom, setIsListeningRandom] = useState(false);
+            const [isListeningLoop, setIsListeningLoop] = useState(false);
+            const [listeningPlaylist, setListeningPlaylist] = useState([]);
+
+            const isListeningLoopRef = React.useRef(isListeningLoop);
+            isListeningLoopRef.current = isListeningLoop;
+            const isListeningRandomRef = React.useRef(isListeningRandom);
+            isListeningRandomRef.current = isListeningRandom;
+
+            // 支援起點偏移的洗牌清單產生器
+            const generatePlaylist = (length, isRandom, startIndex = 0) => {
+                let list = Array.from({length}, (_, i) => i);
+                if (isRandom) {
+                    for (let i = list.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [list[i], list[j]] = [list[j], list[i]];
+                    }
+                } else {
+                    // 循序模式：將陣列偏移，讓當下的單字變成清單的第 0 首
+                    if (startIndex > 0 && startIndex < length) {
+                        list = [...list.slice(startIndex), ...list.slice(0, startIndex)];
+                    }
+                }
+                return list;
+            };
+
+            // 監聽單字庫改變 (移除 isListeningRandom 依賴，避免切換開關時立刻打斷當下清單)
+            useEffect(() => {
+                const len = currentVocabList.length;
+                if (len > 0) {
+                    setListeningPlaylist(generatePlaylist(len, isListeningRandomRef.current, 0));
+                    setListeningIndex(0);
+                    setIsStopped(true);
+                    setIsPlaying(false);
+                } else {
+                    setListeningPlaylist([]);
+                }
+            }, [currentVocabList]);
+
+            const currentAudioRef = React.useRef(null);
+            const sequenceIdRef = React.useRef(0);
+            const audioCache = React.useRef({});
+
+            // 聽力模式播放引擎
+            useEffect(() => {
+                // 如果不在聽力模式、按下暫停、或清單尚未建立，立刻停止
+                if (currentTab !== 'listening' || !isPlaying || currentVocabList.length === 0 || listeningPlaylist.length === 0) {
+                    if (currentAudioRef.current) currentAudioRef.current.pause();
+                    sequenceIdRef.current++;
+                    return;
+                }
+
+                let isCancelled = false;
+                const seqId = ++sequenceIdRef.current;
+                // 改從 playlist 中抓取真正的單字索引
+                const word = currentVocabList[listeningPlaylist[listeningIndex]];
+
+                const runSequence = async () => {
+                    // 過濾掉例句的中文與平假名輔助，保留純日文
+                    const exampleText = word.example ? word.example.split(' (')[0].replace(/\[.*?\]/g, '').trim() : "";
+
+                    // 定義播放佇列：單字(日) -> 單字(日) -> 中文(中) -> [如果有例句] 例句(日)
+                    const items = [
+                        { text: word.kana, lang: 'ja', delay: 500 },
+                        { text: word.kana, lang: 'ja', delay: 800 },
+                        { text: word.meaning, lang: 'zh-TW', delay: 1000 }
+                    ];
+                    if (exampleText) items.push({ text: exampleText, lang: 'ja', delay: 1200 });
+
+                    for (let item of items) {
+                        if (isCancelled || sequenceIdRef.current !== seqId) return;
+                        if (item.delay) await new Promise(r => setTimeout(r, item.delay));
+                        if (isCancelled || sequenceIdRef.current !== seqId) return;
+
+                        await new Promise((resolve) => {
+                            const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${item.lang}&client=tw-ob&q=${encodeURIComponent(item.text)}`;
+
+                            // 【省流量魔法】檢查快取是否有這段音檔，沒有才建立，有就直接沿用
+                            if (!audioCache.current[url]) {
+                                audioCache.current[url] = new Audio(url);
+                            }
+                            const audio = audioCache.current[url];
+
+                            audio.currentTime = 0; // 重置播放進度
+                            currentAudioRef.current = audio;
+
+                            audio.onended = () => resolve();
+                            audio.onerror = () => resolve();
+                            audio.play().catch(() => resolve());
+                        });
+                    }
+
+                    if (isCancelled || sequenceIdRef.current !== seqId) return;
+
+                    // 單字整組播完後，暫停 1.5 秒再進入下一個，保護耳朵也保護 API
+                    await new Promise(r => setTimeout(r, 1500));
+                    if (isCancelled || sequenceIdRef.current !== seqId) return;
+
+                    // 自動切換到下一首或處理清單結尾
+                    const len = currentVocabList.length;
+                    if (listeningIndex + 1 >= len) {
+                        // 播到最後一首了
+                        if (!isListeningLoopRef.current) {
+                            setIsPlaying(false); // 沒開循環，直接停止
+                            setIsStopped(true);  // 新增：標記為徹底停止
+                        } else {
+                            // 有開循環
+                            if (isListeningRandomRef.current) {
+                                setListeningPlaylist(generatePlaylist(len, true)); // 重新洗牌
+                            }
+                            setListeningIndex(0); // 從清單頭開始
+                        }
+                    } else {
+                        setListeningIndex(listeningIndex + 1); // 正常前往下一首
+                    }
+                };
+
+                runSequence();
+
+                // 清除函數：當使用者按暫停或切換單字時觸發
+                return () => {
+                    isCancelled = true;
+                    if (currentAudioRef.current) currentAudioRef.current.pause();
+                };
+            }, [listeningIndex, isPlaying, currentTab, currentVocabList, isListeningRandom]);
+
+            // 安全的跳躍邏輯 (處理上十個、下十個，避免陣列索引變負數)
+            const handleListeningJump = (step) => {
+                setListeningIndex(prev => {
+                    const len = currentVocabList.length;
+                    if (len === 0) return 0;
+                    let next = prev + step;
+                    // 確保手動跳躍超出範圍時，用餘數繞轉回來
+                    if (next < 0) next = (next % len + len) % len;
+                    if (next >= len) next = next % len;
+                    return next;
+                });
+            };
+
+            const [isSpeaking, setIsSpeaking] = useState(false);
+
+            // 聽力模式按鈕控制邏輯
+            const handleStopClick = () => {
+                setIsPlaying(false);
+                setIsStopped(true); // 標記為徹底停止
+            };
+
+            const handlePlayPauseClick = () => {
+                if (!isPlaying) {
+                    // 如果從「徹底停止」狀態重新啟動，重新規劃清單
+                    if (isStopped) {
+                        const len = currentVocabList.length;
+                        // 抓出當下螢幕顯示單字的絕對 Index
+                        const currentAbsoluteIdx = listeningPlaylist.length > 0 ? listeningPlaylist[listeningIndex] : 0;
+
+                        // 隨機模式：產生全新亂數；循序模式：產生以 currentAbsoluteIdx 為首的循序清單
+                        setListeningPlaylist(generatePlaylist(len, isListeningRandom, isListeningRandom ? 0 : currentAbsoluteIdx));
+                        setListeningIndex(0); // 清單計數歸零，從第 1 首開始
+                        setIsStopped(false);
+                    }
+                    setIsPlaying(true);
+                } else {
+                    // 單純暫停，清單進度保留
+                    setIsPlaying(false);
+                }
+            };
+
+            const speak = (targetWord, isFull = false) => {
+                if (isSpeaking) return;
+                setIsSpeaking(true);
+
+                // 先去掉 (中文翻譯)，再用正則表達式去掉 [平假名讀音]
+                const exampleText = targetWord.example
+                    ? targetWord.example.split(' (')[0].replace(/\[.*?\]/g, '').trim()
+                    : "";
+                const textToSpeak = isFull ? `${targetWord.kana}。 ${exampleText}` : targetWord.kana;
+
+                const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ja&client=tw-ob&q=${encodeURIComponent(textToSpeak)}`;
+                const audio = new Audio(url);
+
+                audio.onended = () => setIsSpeaking(false);
+                audio.onerror = () => setIsSpeaking(false);
+                audio.play().catch(e => { console.error(e); setIsSpeaking(false); });
             };
 
             const updateStats = (id, isCorrect) => {
@@ -144,7 +346,7 @@
                         return (Math.random() * (1 - rateA)) - (Math.random() * (1 - rateB));
                     });
                 } else {
-                    pool.sort(() => Math.random() - 0.5); 
+                    pool.sort(() => Math.random() - 0.5);
                 }
 
                 const generateOptions = (correctWord, field) => {
@@ -176,7 +378,7 @@
                 if (examConfig.hideKanji && examAnswers.kanji !== q.word.kanji) isCorrect = false;
                 if (examConfig.hideKana && examAnswers.kana !== q.word.kana) isCorrect = false;
                 if (examConfig.hideMeaning && examAnswers.meaning !== q.word.meaning) isCorrect = false;
-                
+
                 updateStats(q.word.id, isCorrect);
                 setExamSubmitted(true);
             };
@@ -200,16 +402,16 @@
                                 <i className="fas fa-download mr-1"></i>匯出紀錄
                             </button>
                         </div>
-                        
+
                         <div className="px-4 pb-2 flex gap-2 overflow-x-auto">
                             {availableLevels.map(lvl => (
                                 <label key={lvl} className="flex items-center gap-1 bg-blue-50 px-2 py-1 rounded cursor-pointer text-sm select-none hover:bg-blue-100">
-                                    <input type="checkbox" className="accent-blue-600" 
+                                    <input type="checkbox" className="accent-blue-600"
                                         checked={selectedLevels.includes(lvl)}
                                         onChange={(e) => {
                                             if(e.target.checked) setSelectedLevels([...selectedLevels, lvl]);
                                             else if(selectedLevels.length > 1) setSelectedLevels(selectedLevels.filter(l => l !== lvl));
-                                        }} 
+                                        }}
                                     />
                                     {lvl}
                                 </label>
@@ -218,6 +420,7 @@
 
                         <div className="flex border-t">
                             <button onClick={() => setCurrentTab('study')} className={`flex-1 py-3 text-sm tab-btn ${currentTab === 'study' ? 'active' : 'text-slate-500'}`}>學習模式</button>
+                            <button onClick={() => setCurrentTab('listening')} className={`flex-1 py-3 text-sm tab-btn ${currentTab === 'listening' ? 'active' : 'text-slate-500'}`}>聽力模式</button>
                             <button onClick={() => setCurrentTab('exam_setup')} className={`flex-1 py-3 text-sm tab-btn ${currentTab.startsWith('exam') ? 'active' : 'text-slate-500'}`}>考試模式</button>
                         </div>
                     </div>
@@ -235,8 +438,8 @@
                                         <span>
                                             {(() => {
                                                 const total = currentVocabList.length;
-                                                // 每次計算已瀏覽過的數量
-                                                const viewedCount = viewedIds.size;
+                                                // 動態計算：比對「當前的單字庫」與「歷史瀏覽紀錄」，算出當前列表有多少單字被看過
+                                                const viewedCount = currentVocabList.filter(word => viewedIds.has(word.id)).length;
                                                 const percentage = total > 0 ? Math.round((viewedCount / total) * 100) : 0;
                                                 return `${percentage}% (${viewedCount}/${total})`;
                                             })()}
@@ -247,22 +450,88 @@
                                     </div>
 
                                     <div className="bg-white rounded-2xl shadow-sm p-6 text-center relative mb-4">
-                                        <button onClick={() => speak(word.kana)} className="absolute top-4 right-4 text-slate-300 hover:text-blue-500"><i className="fas fa-volume-up text-xl"></i></button>
-                                        
-                                        <div className={`text-5xl font-bold py-3 ${hideKanji ? 'blur-md bg-slate-200 text-transparent select-none' : 'text-slate-800'}`} onClick={() => setHideKanji(false)}>{word.kanji}</div>
-                                        
-                                        <div className={`flex justify-center items-center gap-2 py-2 ${hideKana ? 'blur-md bg-slate-200 text-transparent select-none' : ''}`} onClick={() => setHideKana(false)}>
-                                            <span className="text-2xl text-slate-600">{word.kana}</span>
-                                            {word.accent !== undefined && <span className="text-xs bg-blue-50 text-blue-500 px-2 rounded-full">[{word.accent}]</span>}
+                                        {/* 原本單字的發音按鈕 (維持在右上角) */}
+                                        <button
+                                            onClick={() => speak(word, false)}
+                                            className={`absolute top-4 right-4 text-xl ...`}
+                                        >
+                                            <i className="fas fa-volume-up"></i>
+                                        </button>
+
+                                        {/* 左上角：隨機/循序切換按鈕 (與右上角喇叭對稱) */}
+                                        <button
+                                            onClick={() => setIsRandomStudy(!isRandomStudy)}
+                                            className={`absolute top-4 left-4 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm border transition-all active:scale-95 ${isRandomStudy ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'}`}
+                                        >
+                                            <i className="fas fa-random mr-1"></i>{isRandomStudy ? '隨機' : '循序'}
+                                        </button>
+
+                                        {/* 左右高型懸浮切換按鈕與核心單字顯示區 */}
+                                        <div className="flex items-stretch justify-between mt-8 mb-2 gap-3 px-1">
+                                            {/* 上一頁按鈕 (左側) */}
+                                            <button
+                                                onClick={() => setStudyIndex((studyIndex - 1 + currentVocabList.length) % currentVocabList.length)}
+                                                className="w-10 rounded-xl bg-slate-50 border border-slate-100 shadow-sm text-slate-400 hover:text-slate-600 hover:bg-slate-200 active:scale-95 transition-all flex items-center justify-center"
+                                            >
+                                                <i className="fas fa-chevron-left"></i>
+                                            </button>
+
+                                            {/* 單字核心區 (置中) */}
+                                            <div className="flex-1 flex flex-col items-center justify-center">
+                                                <div className={`text-5xl font-bold py-2 ${hideKanji ? 'blur-md bg-slate-200 text-transparent select-none' : 'text-slate-800'}`} onClick={() => setHideKanji(false)}>
+                                                    {word.kanji}
+                                                </div>
+                                                <div className="flex justify-center items-center gap-2 py-2">
+                                                    <span className={`text-2xl text-slate-600 ${hideKana ? 'blur-md bg-slate-200 text-transparent select-none' : ''}`} onClick={() => setHideKana(false)}>
+                                                        {word.kana}
+                                                    </span>
+                                                    {word.accent !== undefined && <span className="text-xs bg-blue-50 text-blue-500 px-2 rounded-full">[{word.accent}]</span>}
+                                                </div>
+                                            </div>
+
+                                            {/* 下一頁按鈕 (右側) */}
+                                            <button
+                                                onClick={() => setStudyIndex(isRandomStudy ? Math.floor(Math.random() * currentVocabList.length) : (studyIndex + 1) % currentVocabList.length)}
+                                                className="w-10 rounded-xl bg-slate-50 border border-slate-100 shadow-sm text-slate-400 hover:text-slate-600 hover:bg-slate-200 active:scale-95 transition-all flex items-center justify-center"
+                                            >
+                                                <i className="fas fa-chevron-right"></i>
+                                            </button>
                                         </div>
-                                        
+
                                         <hr className="my-3 opacity-50" />
                                         <div className={`text-xl py-2 ${hideMeaning ? 'blur-md bg-slate-200 text-transparent select-none' : 'text-blue-600 font-bold'}`} onClick={() => setHideMeaning(false)}>{word.meaning}</div>
 
-                                        {(word.example || word.notes) && (
+                                        {/* 例句與筆記區塊 */}
+                                        { (word.example || word.notes) && (
                                             <div className="mt-4 text-left bg-slate-50 p-3 rounded-lg text-sm border border-slate-100">
-                                                {word.example && <div className="mb-1"><span className="font-bold text-slate-500 mr-1">例:</span>{word.example}</div>}
-                                                {word.notes && <div><span className="font-bold text-slate-500 mr-1">註:</span>{word.notes}</div>}
+                                                {/* 例句部分 */}
+                                                {word.example && (
+                                                    <div className="mb-2">
+                                                        <div className="flex items-center mb-1">
+                                                            <button
+                                                                onClick={() => speak(word, true)}
+                                                                className="mr-2 text-slate-400 hover:text-blue-500 transition-colors"
+                                                            >
+                                                                <i className="fas fa-volume-down text-sm"></i>
+                                                            </button>
+                                                            <span className="font-bold text-slate-500 mr-1">例:</span>
+                                                            <span className="text-slate-700">{word.example.split(' (')[0]}</span>
+                                                        </div>
+                                                        {word.example.includes('(') && (
+                                                            <div className="text-slate-400 text-xs ml-8">
+                                                                ({word.example.split('(')[1]}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                {/* 筆記部分 (新增這段) */}
+                                                {word.notes && (
+                                                    <div className="border-t border-slate-200 pt-2 mt-1">
+                                                        <span className="font-bold text-amber-600 mr-2">註:</span>
+                                                        <span className="text-slate-600 italic">{word.notes}</span>
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                     </div>
@@ -272,32 +541,80 @@
                                         <button onClick={() => setHideKana(!hideKana)} className={`py-2 text-xs rounded-lg border font-bold ${hideKana?'bg-slate-800 text-white':'bg-white text-slate-600'}`}>遮假名</button>
                                         <button onClick={() => setHideMeaning(!hideMeaning)} className={`py-2 text-xs rounded-lg border font-bold ${hideMeaning?'bg-slate-800 text-white':'bg-white text-slate-600'}`}>遮中文</button>
                                     </div>
-                                    
-                                    <div className="mt-auto flex items-center justify-between w-full gap-2 px-2 py-4">
-                                        {/* 上一頁按鈕 */}
-                                        <button 
-                                            onClick={() => setStudyIndex((studyIndex - 1 + currentVocabList.length) % currentVocabList.length)} 
-                                            className="flex-1 h-16 bg-white rounded-xl shadow-sm border border-slate-200 transition-all duration-200 hover:scale-[1.02] active:scale-95 text-slate-400 hover:text-slate-800 flex items-center justify-center"
-                                        >
-                                            <i className="fas fa-chevron-left text-xl"></i>
-                                        </button>
+                                </div>
+                            );
+                        })()}
 
-                                        {/* 隨機/循序按鈕 */}
-                                        <button 
-                                            onClick={() => setIsRandomStudy(!isRandomStudy)} 
-                                            className={`flex-1 h-16 rounded-xl shadow-sm border transition-all duration-200 hover:scale-[1.02] active:scale-95 text-xs font-bold flex flex-col items-center justify-center ${isRandomStudy ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-slate-400 border-slate-200'}`}
-                                        >
-                                            <i className="fas fa-random text-lg mb-0.5"></i>
-                                            {isRandomStudy ? '隨機' : '循序'}
-                                        </button>
+                        {currentTab === 'listening' && currentVocabList.length > 0 && listeningPlaylist.length > 0 && (() => {
+                            // 透過播放清單抓出實際單字
+                            const word = currentVocabList[listeningPlaylist[listeningIndex]];
+                            if (!word) return null;
 
-                                        {/* 下一頁按鈕 */}
-                                        <button 
-                                            onClick={() => setStudyIndex(isRandomStudy ? Math.floor(Math.random() * currentVocabList.length) : (studyIndex + 1) % currentVocabList.length)} 
-                                            className="flex-1 h-16 bg-white rounded-xl shadow-sm border border-slate-200 transition-all duration-200 hover:scale-[1.02] active:scale-95 text-slate-400 hover:text-slate-800 flex items-center justify-center"
-                                        >
-                                            <i className="fas fa-chevron-right text-xl"></i>
-                                        </button>
+                            return (
+                                <div className="flex flex-col flex-1 h-full">
+                                    {/* 上半部：單字顯示面板 */}
+                                    <div className="bg-white rounded-2xl shadow-sm p-6 text-center mb-4 flex-1 flex flex-col justify-center">
+                                        <div className="text-5xl font-bold py-2 text-slate-800">{word.kanji}</div>
+                                        <div className="flex justify-center items-center gap-2 py-2">
+                                            <span className="text-2xl text-slate-600">{word.kana}</span>
+                                            {word.accent !== undefined && <span className="text-xs bg-blue-50 text-blue-500 px-2 rounded-full">[{word.accent}]</span>}
+                                        </div>
+                                        <hr className="my-3 opacity-50" />
+                                        <div className="text-xl py-2 text-blue-600 font-bold">{word.meaning}</div>
+
+                                        {/* 例句與筆記 */}
+                                        { (word.example || word.notes) && (
+                                            <div className="mt-4 text-left bg-slate-50 p-3 rounded-lg text-sm border border-slate-100">
+                                                {word.example && (
+                                                    <div className="mb-2">
+                                                        <div className="flex items-center mb-1">
+                                                            <span className="font-bold text-slate-500 mr-1">例:</span>
+                                                            <span className="text-slate-700">{word.example.split(' (')[0]}</span>
+                                                        </div>
+                                                        {word.example.includes('(') && (
+                                                            <div className="text-slate-400 text-xs ml-6">
+                                                                ({word.example.split('(')[1]}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                {word.notes && (
+                                                    <div className="border-t border-slate-200 pt-2 mt-1">
+                                                        <span className="font-bold text-amber-600 mr-2">註:</span>
+                                                        <span className="text-slate-600 italic">{word.notes}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* 下半部：MP3 控制面板 */}
+                                    <div className="mt-auto bg-slate-800 text-white rounded-3xl p-6 shadow-xl mb-2 flex flex-col gap-5">
+                                        <div className="flex justify-between items-center text-xs font-bold px-1 mb-1">
+                                            <div className="flex gap-4">
+                                                <button onClick={() => setIsListeningRandom(!isListeningRandom)} className={`flex items-center gap-1 transition-colors ${isListeningRandom ? 'text-blue-400' : 'text-slate-400 hover:text-slate-200'}`}>
+                                                    <i className="fas fa-random"></i> {isListeningRandom ? '隨機 (洗牌)' : '循序'}
+                                                </button>
+                                                <button onClick={() => setIsListeningLoop(!isListeningLoop)} className={`flex items-center gap-1 transition-colors ${isListeningLoop ? 'text-blue-400' : 'text-slate-400 hover:text-slate-200'}`}>
+                                                    <i className="fas fa-redo"></i> {isListeningLoop ? '循環: 開' : '循環: 關'}
+                                                </button>
+                                            </div>
+                                            <span className="text-slate-400 bg-slate-700/50 px-2 py-1 rounded-full">{listeningIndex + 1} / {currentVocabList.length}</span>
+                                        </div>
+
+                                        <div className="flex justify-between items-center px-1">
+                                            <button onClick={() => handleListeningJump(-10)} className="text-slate-400 hover:text-white text-lg active:scale-90 transition-all"><i className="fas fa-backward"></i></button>
+                                            <button onClick={() => handleListeningJump(-1)} className="text-slate-400 hover:text-white text-xl active:scale-90 transition-all"><i className="fas fa-step-backward"></i></button>
+
+                                            <button onClick={handleStopClick} className="text-slate-400 hover:text-red-400 text-xl active:scale-90 transition-all"><i className="fas fa-stop"></i></button>
+
+                                            <button onClick={handlePlayPauseClick} className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center text-2xl shadow-lg hover:scale-105 active:scale-95 transition-all text-white">
+                                                <i className={`fas ${isPlaying ? 'fa-pause' : 'fa-play pl-1'}`}></i>
+                                            </button>
+
+                                            <button onClick={() => handleListeningJump(1)} className="text-slate-400 hover:text-white text-xl active:scale-90 transition-all"><i className="fas fa-step-forward"></i></button>
+                                            <button onClick={() => handleListeningJump(10)} className="text-slate-400 hover:text-white text-lg active:scale-90 transition-all"><i className="fas fa-forward"></i></button>
+                                        </div>
                                     </div>
                                 </div>
                             );
@@ -306,7 +623,7 @@
                         {currentTab === 'exam_setup' && (
                             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
                                 <h2 className="text-lg font-bold mb-4 border-b pb-2"><i className="fas fa-sliders-h mr-2"></i>測驗設定</h2>
-                                
+
                                 <div className="mb-6">
                                     <p className="text-sm font-bold text-slate-500 mb-2">要遮擋哪些欄位？(最多選 2 個)</p>
                                     <div className="grid grid-cols-3 gap-2">
@@ -339,7 +656,7 @@
 
                         {currentTab === 'exam' && examQuestions.length > 0 && (() => {
                             const q = examQuestions[examIndex];
-                            
+
                             const renderOptions = (title, field, options) => {
                                 if (!options) return null;
                                 return (
@@ -350,7 +667,7 @@
                                                 const isSelected = examAnswers[field] === opt;
                                                 const isCorrectAns = q.word[field] === opt;
                                                 let btnClass = "py-3 px-2 text-sm rounded-lg border font-bold transition-colors ";
-                                                
+
                                                 if (!examSubmitted) {
                                                     btnClass += isSelected ? "bg-blue-100 border-blue-500 text-blue-700 shadow-sm" : "bg-white text-slate-600 hover:bg-slate-50";
                                                 } else {
@@ -369,8 +686,8 @@
                                 );
                             };
 
-                            const allAnswered = (!examConfig.hideKanji || examAnswers.kanji) && 
-                                                (!examConfig.hideKana || examAnswers.kana) && 
+                            const allAnswered = (!examConfig.hideKanji || examAnswers.kanji) &&
+                                                (!examConfig.hideKana || examAnswers.kana) &&
                                                 (!examConfig.hideMeaning || examAnswers.meaning);
 
                             return (
@@ -388,22 +705,22 @@
                                         </div>
 
                                         <hr className="my-4 border-slate-100" />
-                                        
+
                                         {renderOptions("漢字", "kanji", q.optionsKanji)}
                                         {renderOptions("假名", "kana", q.optionsKana)}
                                         {renderOptions("中文", "meaning", q.optionsMeaning)}
                                     </div>
 
                                     {!examSubmitted ? (
-                                        <button 
-                                            onClick={submitExamAnswer} 
+                                        <button
+                                            onClick={submitExamAnswer}
                                             disabled={!allAnswered}
                                             className={`py-4 rounded-xl font-bold w-full mt-auto transition-all ${allAnswered ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
                                         >
                                             確認答案
                                         </button>
                                     ) : (
-                                        <button 
+                                        <button
                                             onClick={() => {
                                                 if (examIndex + 1 < examQuestions.length) {
                                                     setExamIndex(examIndex + 1);
@@ -413,7 +730,7 @@
                                                     alert("測驗完成！成績已記錄。");
                                                     setCurrentTab('exam_setup');
                                                 }
-                                            }} 
+                                            }}
                                             className="py-4 bg-slate-800 text-white rounded-xl font-bold w-full mt-auto shadow-lg"
                                         >
                                             {examIndex + 1 < examQuestions.length ? "下一題" : "完成測驗"}

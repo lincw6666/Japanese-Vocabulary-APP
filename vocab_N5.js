@@ -11,7 +11,7 @@ window.VOCAB_DB.N5 = [
         "kana": "あおい",
         "meaning": "藍色",
         "accent": 2,
-        "example": "青い空が綺麗ですね。 (藍色的天空很美呢。)",
+        "example": "青い空が綺麗ですね。[あおい そらが きれいですね。] (藍色的天空很美呢。)",
         "notes": "用來形容顏色的い形容詞",
         "correct": 0,
         "wrong": 0
@@ -22,7 +22,7 @@ window.VOCAB_DB.N5 = [
         "kana": "あかい",
         "meaning": "紅色",
         "accent": 0,
-        "example": "赤いりんごを食べます。 (我要吃紅色的蘋果。)",
+        "example": "赤いりんごを食べます。[あかい りんごを たべます。] (我要吃紅色的蘋果。)",
         "notes": "",
         "correct": 0,
         "wrong": 0
@@ -33,7 +33,7 @@ window.VOCAB_DB.N5 = [
         "kana": "かき",
         "meaning": "柿子",
         "accent": 0,
-        "example": "秋は柿が美味しい季節です。 (秋天是柿子很好吃的季節。)",
+        "example": "秋は柿が美味しい季節です。[あきは かきが おいしい きせつです。] (秋天是柿子很好吃的季節。)",
         "notes": "注意發音不要跟牡蠣(かき [1])搞混",
         "correct": 0,
         "wrong": 0
