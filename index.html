@@ -348,39 +348,34 @@
                 }
             };
 
-            const speak = (targetWord, isFull = false) => {
+            const speak = async (targetWord, isFull = false) => {
                 if (isSpeaking) return;
 
-                // 去掉 (中文翻譯)，再用正則表達式去掉 [平假名讀音]
                 const exampleText = targetWord.example
                     ? targetWord.example.split(' (')[0].replace(/\[.*?\]/g, '').trim()
                     : "";
                 const textToSpeak = isFull ? `${targetWord.kana}。 ${exampleText}` : targetWord.kana;
 
                 const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ja&client=tw-ob&q=${encodeURIComponent(textToSpeak)}`;
-
-                // 【iOS Safari 關鍵補丁】
-                // 這裡我們建立 audio 物件時，確保它是在點擊事件中直接 play()
                 const audio = new Audio(url);
 
-                // 增加錯誤監聽，確認是否為 iOS 權限拒絕
-                audio.onerror = (e) => {
-                    console.error("音訊載入錯誤:", e);
+                // 核心關鍵：iOS 需要在使用者動作的「當下」呼叫 play
+                // 我們嘗試在一個非同步的 promise 執行前就建立 audio 物件
+                setIsSpeaking(true);
+
+                try {
+                    // 為了 iOS，我們確保 play 是直接在點擊事件後的第一時間執行
+                    await audio.play();
+                } catch (error) {
+                    console.error("iOS 播放被阻擋:", error);
+                    // 如果被阻擋，嘗試觸發一個全域的解鎖提示（如果你的介面有地方可以放提示）
+                    // 或者給予更明顯的 UI 回饋
                     setIsSpeaking(false);
-                };
+                    // 這裡可以選擇是否要彈出一個更友善的視窗告知使用者
+                }
 
                 audio.onended = () => setIsSpeaking(false);
-
-                setIsSpeaking(true);
-                const playPromise = audio.play();
-
-                if (playPromise !== undefined) {
-                    playPromise.catch(error => {
-                        console.error("iOS 自動播放限制導致無法播放:", error);
-                        setIsSpeaking(false);
-                        alert("iOS 限制了網頁自動播放聲音，請確保點擊按鈕啟動。如果還是沒聲音，請檢查您的 iPhone 是否開啟了靜音模式。");
-                    });
-                }
+                audio.onerror = () => setIsSpeaking(false);
             };
 
             const updateStats = (id, isCorrect) => {
