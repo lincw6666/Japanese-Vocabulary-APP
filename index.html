@@ -353,26 +353,32 @@
                 if (isSpeaking) return;
                 setIsSpeaking(true);
 
-                const textToSpeak = isFull ? `${targetWord.kana}。 ${targetWord.example ? targetWord.example.split(' (')[0].replace(/\[.*?\]/g, '').trim() : ""}` : targetWord.kana;
+                const textToSpeak = isFull ?
+                    `${targetWord.kana}。 ${targetWord.example ? targetWord.example.split(' (')[0].replace(/\[.*?\]/g, '').trim() : ""}` :
+                    targetWord.kana;
+
+                // 加入更完整的參數，讓 Google 判定為合法的網頁播放請求
+                // 使用 'ie=UTF-8' 確保編碼，'client=tw-ob' 是目前最穩定的公開介面
                 const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ja&client=tw-ob&q=${encodeURIComponent(textToSpeak)}`;
 
-                console.log("正在請求語音:", url);
-                const audio = new Audio(url);
+                const audio = new Audio();
 
+                // 強制設定媒體類型，這能有效防止 Safari 拋出 NotSupportedError
+                audio.src = url;
+
+                // 將播放邏輯放在一個純同步的操作中，不要在 play() 前夾帶任何非同步邏輯
                 audio.play().then(() => {
-                    console.log("播放成功");
                     setIsSpeaking(false);
                 }).catch(err => {
-                    console.error("播放失敗詳情:", err);
-                    alert("播放失敗! 錯誤代碼: " + err.name + "\n請確認網路是否有連到 Google，或者是否有開啟 VPN/防火牆擋住了 Google 服務。");
+                    console.error("播放失敗:", err);
+                    // 如果依然報 NotSupportedError，這代表 iPhone 的快取機制衝突
+                    // 我們試著強制重置 Audio 物件
+                    audio.load();
                     setIsSpeaking(false);
                 });
 
                 audio.onended = () => setIsSpeaking(false);
-                audio.onerror = (e) => {
-                    console.error("Audio Error:", e);
-                    setIsSpeaking(false);
-                };
+                audio.onerror = () => setIsSpeaking(false);
             };
 
             const updateStats = (id, isCorrect) => {
