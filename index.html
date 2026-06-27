@@ -350,20 +350,37 @@
 
             const speak = (targetWord, isFull = false) => {
                 if (isSpeaking) return;
-                setIsSpeaking(true);
 
-                // 先去掉 (中文翻譯)，再用正則表達式去掉 [平假名讀音]
+                // 去掉 (中文翻譯)，再用正則表達式去掉 [平假名讀音]
                 const exampleText = targetWord.example
                     ? targetWord.example.split(' (')[0].replace(/\[.*?\]/g, '').trim()
                     : "";
                 const textToSpeak = isFull ? `${targetWord.kana}。 ${exampleText}` : targetWord.kana;
 
                 const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ja&client=tw-ob&q=${encodeURIComponent(textToSpeak)}`;
+
+                // 【iOS Safari 關鍵補丁】
+                // 這裡我們建立 audio 物件時，確保它是在點擊事件中直接 play()
                 const audio = new Audio(url);
 
+                // 增加錯誤監聽，確認是否為 iOS 權限拒絕
+                audio.onerror = (e) => {
+                    console.error("音訊載入錯誤:", e);
+                    setIsSpeaking(false);
+                };
+
                 audio.onended = () => setIsSpeaking(false);
-                audio.onerror = () => setIsSpeaking(false);
-                audio.play().catch(e => { console.error(e); setIsSpeaking(false); });
+
+                setIsSpeaking(true);
+                const playPromise = audio.play();
+
+                if (playPromise !== undefined) {
+                    playPromise.catch(error => {
+                        console.error("iOS 自動播放限制導致無法播放:", error);
+                        setIsSpeaking(false);
+                        alert("iOS 限制了網頁自動播放聲音，請確保點擊按鈕啟動。如果還是沒聲音，請檢查您的 iPhone 是否開啟了靜音模式。");
+                    });
+                }
             };
 
             const updateStats = (id, isCorrect) => {
