@@ -30,6 +30,19 @@
         const { useState, useEffect, useMemo } = React;
 
         function App() {
+            // 在 App() 函數內加入這兩個狀態
+            const [isUnlocked, setIsUnlocked] = useState(false);
+
+            // 建立一個處理點擊的函數
+            const handleGlobalUnlock = () => {
+                // 建立一個空的音訊物件並播放
+                const audio = new Audio('');
+                audio.play().then(() => {
+                    setIsUnlocked(true);
+                    console.log("iOS 音訊權限已解鎖");
+                });
+            };
+
             // 成績讀寫防護機制
             const loadStats = () => {
                 try {
@@ -474,413 +487,433 @@
                 );
             }
 
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
             return (
-                <div className="max-w-xl mx-auto min-h-screen flex flex-col bg-slate-50">
-                    <div className="bg-white shadow-sm sticky top-0 z-10">
-                        <div className="p-4 flex justify-between items-center">
-                            <h1 className="text-xl font-bold text-slate-800">日文全方位自學</h1>
-                            <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
-                                <i className="fas fa-download mr-1"></i>匯出紀錄
+                <React.Fragment>
+                    {/* 只有在 iOS 且尚未解鎖時，才顯示啟動按鈕 */}
+                    {isIOS && !isUnlocked && (
+                        <div className="fixed inset-0 bg-blue-600 z-[9999] flex flex-col items-center justify-center text-white p-6 text-center">
+                            <i className="fas fa-volume-up text-6xl mb-6"></i>
+                            <h1 className="text-2xl font-bold mb-2">準備開始學習！</h1>
+                            <p className="mb-8 opacity-80">iOS 裝置需要您點擊下方按鈕以啟用語音播放功能。</p>
+                            <button
+                                onClick={handleGlobalUnlock}
+                                className="bg-white text-blue-600 px-10 py-4 rounded-full font-bold shadow-2xl active:scale-95 transition-transform"
+                            >
+                                點擊此處啟用聲音
                             </button>
-                        </div>
-
-                        <div className="px-4 pb-2 flex gap-2 overflow-x-auto">
-                            {availableLevels.map(lvl => (
-                                <label key={lvl} className="flex items-center gap-1 bg-blue-50 px-2 py-1 rounded cursor-pointer text-sm select-none hover:bg-blue-100">
-                                    <input type="checkbox" className="accent-blue-600"
-                                        checked={selectedLevels.includes(lvl)}
-                                        onChange={(e) => {
-                                            if(e.target.checked) setSelectedLevels([...selectedLevels, lvl]);
-                                            else if(selectedLevels.length > 1) setSelectedLevels(selectedLevels.filter(l => l !== lvl));
-                                        }}
-                                    />
-                                    {lvl}
-                                </label>
-                            ))}
-                        </div>
-
-                        <div className="flex border-t">
-                            <button onClick={() => setCurrentTab('study')} className={`flex-1 py-3 text-sm tab-btn ${currentTab === 'study' ? 'active' : 'text-slate-500'}`}>學習模式</button>
-                            <button onClick={() => setCurrentTab('listening')} className={`flex-1 py-3 text-sm tab-btn ${currentTab === 'listening' ? 'active' : 'text-slate-500'}`}>聽力模式</button>
-                            <button onClick={() => setCurrentTab('exam_setup')} className={`flex-1 py-3 text-sm tab-btn ${currentTab.startsWith('exam') ? 'active' : 'text-slate-500'}`}>考試模式</button>
-                        </div>
-                    </div>
-
-                    {/* 右下角浮動篩選按鈕 (FAB) */}
-                    <button
-                        onClick={() => setShowFilterModal(true)}
-                        className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 text-white rounded-full shadow-2xl flex items-center justify-center text-2xl hover:scale-105 active:scale-95 transition-all z-40 border-2 border-white"
-                    >
-                        <i className="fas fa-filter"></i>
-                        {selectedCategories.length > 0 && (
-                            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center border-2 border-white">
-                                {selectedCategories.length}
-                            </span>
-                        )}
-                    </button>
-
-                    {/* 分類篩選器彈窗 (Modal) */}
-                    {showFilterModal && (
-                        <div className="fixed inset-0 bg-slate-900/60 z-50 flex justify-center items-center p-4 backdrop-blur-sm">
-                            <div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl relative">
-                                <button onClick={() => setShowFilterModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform">
-                                    <i className="fas fa-times text-2xl"></i>
-                                </button>
-
-                                <h2 className="text-xl font-bold mb-2 text-slate-800">
-                                    <i className="fas fa-tags mr-2 text-blue-500"></i>單字類別篩選
-                                </h2>
-                                <p className="text-xs text-slate-500 mb-5">
-                                    {selectedCategories.length === 0
-                                        ? "目前未套用篩選，將顯示所選級別的所有單字。"
-                                        : "目前僅顯示符合以下勾選類別的單字。"}
-                                </p>
-
-                                <div className="grid grid-cols-3 gap-2 max-h-[50vh] overflow-y-auto p-1">
-                                    {availableCategories.length === 0 ? (
-                                        <div className="col-span-3 text-center text-slate-400 text-sm py-4">
-                                            目前選取的級別中尚未有分類標籤的單字。
-                                        </div>
-                                    ) : (
-                                        availableCategories.map(cat => (
-                                            <label key={cat} className={`flex flex-col items-center justify-center py-3 px-1 border rounded-xl cursor-pointer text-sm font-bold transition-all active:scale-95 ${selectedCategories.includes(cat) ? 'bg-blue-100 border-blue-500 text-blue-700 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
-                                                <input type="checkbox" className="hidden"
-                                                    checked={selectedCategories.includes(cat)}
-                                                    onChange={(e) => {
-                                                        if (e.target.checked) setSelectedCategories([...selectedCategories, cat]);
-                                                        else setSelectedCategories(selectedCategories.filter(c => c !== cat));
-                                                    }}
-                                                />
-                                                {cat}
-                                            </label>
-                                        ))
-                                    )}
-                                </div>
-
-                                <div className="mt-6 flex justify-between gap-3">
-                                    <button onClick={() => setSelectedCategories([])} className="flex-1 py-3.5 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors">清空重設</button>
-                                    <button onClick={() => setShowFilterModal(false)} className="flex-[2] py-3.5 bg-blue-600 text-white rounded-xl font-bold shadow-lg hover:bg-blue-700 transition-colors">完成套用</button>
-                                </div>
-                            </div>
                         </div>
                     )}
 
-                    <div className="p-4 flex-1 flex flex-col">
-                        {currentTab === 'study' && currentVocabList.length > 0 && (() => {
-                            const word = currentVocabList[studyIndex];
-                            if (!word) return null;
-                            const s = stats[word.id] || {correct:0, wrong:0};
-                            const errRate = (s.correct+s.wrong)===0 ? 0 : Math.round(s.wrong/(s.correct+s.wrong)*100);
-
-                            return (
-                                <div className="flex flex-col flex-1">
-                                    <div className="flex justify-between text-xs text-slate-500 mb-2">
-                                        <span>
-                                            {(() => {
-                                                const total = currentVocabList.length;
-                                                // 動態計算：比對「當前的單字庫」與「歷史瀏覽紀錄」，算出當前列表有多少單字被看過
-                                                const viewedCount = currentVocabList.filter(word => viewedIds.has(word.id)).length;
-                                                const percentage = total > 0 ? Math.round((viewedCount / total) * 100) : 0;
-                                                return `${percentage}% (${viewedCount}/${total})`;
-                                            })()}
-                                        </span>
-                                        <span>
-                                            錯題率: <b className="text-red-500">{errRate}%</b>
-                                        </span>
-                                    </div>
-
-                                    <div className="bg-white rounded-2xl shadow-sm p-6 text-center relative mb-4">
-                                        {/* 原本單字的發音按鈕 (維持在右上角) */}
-                                        <button
-                                            onClick={() => speak(word, false)}
-                                            className={`absolute top-4 right-4 text-xl ...`}
-                                        >
-                                            <i className="fas fa-volume-up"></i>
-                                        </button>
-
-                                        {/* 左上角：隨機/循序切換按鈕 (與右上角喇叭對稱) */}
-                                        <button
-                                            onClick={() => setIsRandomStudy(!isRandomStudy)}
-                                            className={`absolute top-4 left-4 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm border transition-all active:scale-95 ${isRandomStudy ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'}`}
-                                        >
-                                            <i className="fas fa-random mr-1"></i>{isRandomStudy ? '隨機' : '循序'}
-                                        </button>
-
-                                        {/* 左右高型懸浮切換按鈕與核心單字顯示區 */}
-                                        <div className="flex items-stretch justify-between mt-8 mb-2 gap-3 px-1">
-                                            {/* 上一頁按鈕 (左側) */}
-                                            <button
-                                                onClick={() => setStudyIndex((studyIndex - 1 + currentVocabList.length) % currentVocabList.length)}
-                                                className="w-10 rounded-xl bg-slate-50 border border-slate-100 shadow-sm text-slate-400 hover:text-slate-600 hover:bg-slate-200 active:scale-95 transition-all flex items-center justify-center"
-                                            >
-                                                <i className="fas fa-chevron-left"></i>
-                                            </button>
-
-                                            {/* 單字核心區 (置中) */}
-                                            <div className="flex-1 flex flex-col items-center justify-center">
-                                                <div className={`text-5xl font-bold py-2 ${hideKanji ? 'blur-md bg-slate-200 text-transparent select-none' : 'text-slate-800'}`} onClick={() => setHideKanji(false)}>
-                                                    {word.kanji}
-                                                </div>
-                                                <div className="flex justify-center items-center gap-2 py-2">
-                                                    <span className={`text-2xl text-slate-600 ${hideKana ? 'blur-md bg-slate-200 text-transparent select-none' : ''}`} onClick={() => setHideKana(false)}>
-                                                        {word.kana}
-                                                    </span>
-                                                    {word.accent !== undefined && <span className="text-xs bg-blue-50 text-blue-500 px-2 rounded-full">[{word.accent}]</span>}
-                                                </div>
-                                            </div>
-
-                                            {/* 下一頁按鈕 (右側) */}
-                                            <button
-                                                onClick={() => setStudyIndex(isRandomStudy ? Math.floor(Math.random() * currentVocabList.length) : (studyIndex + 1) % currentVocabList.length)}
-                                                className="w-10 rounded-xl bg-slate-50 border border-slate-100 shadow-sm text-slate-400 hover:text-slate-600 hover:bg-slate-200 active:scale-95 transition-all flex items-center justify-center"
-                                            >
-                                                <i className="fas fa-chevron-right"></i>
-                                            </button>
-                                        </div>
-
-                                        <hr className="my-3 opacity-50" />
-                                        <div className={`text-xl py-2 ${hideMeaning ? 'blur-md bg-slate-200 text-transparent select-none' : 'text-blue-600 font-bold'}`} onClick={() => setHideMeaning(false)}>{word.meaning}</div>
-
-                                        {/* 例句與筆記區塊 */}
-                                        { (word.example || word.notes) && (
-                                            <div className="mt-4 text-left bg-slate-50 p-3 rounded-lg text-sm border border-slate-100">
-                                                {/* 例句部分 */}
-                                                {word.example && (
-                                                    <div className="mb-2">
-                                                        <div className="flex items-center mb-1">
-                                                            <button
-                                                                onClick={() => speak(word, true)}
-                                                                className="mr-2 text-slate-400 hover:text-blue-500 transition-colors"
-                                                            >
-                                                                <i className="fas fa-volume-down text-sm"></i>
-                                                            </button>
-                                                            <span className="font-bold text-slate-500 mr-1">例:</span>
-                                                            <span className="text-slate-700">{word.example.split(' (')[0]}</span>
-                                                        </div>
-                                                        {word.example.includes('(') && (
-                                                            <div className="text-slate-400 text-xs ml-8">
-                                                                ({word.example.split('(')[1]}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-
-                                                {/* 筆記部分 (新增這段) */}
-                                                {word.notes && (
-                                                    <div className="border-t border-slate-200 pt-2 mt-1">
-                                                        <span className="font-bold text-amber-600 mr-2">註:</span>
-                                                        <span className="text-slate-600 italic">{word.notes}</span>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    <div className="grid grid-cols-3 gap-2 mb-4">
-                                        <button onClick={() => setHideKanji(!hideKanji)} className={`py-2 text-xs rounded-lg border font-bold ${hideKanji?'bg-slate-800 text-white':'bg-white text-slate-600'}`}>遮漢字</button>
-                                        <button onClick={() => setHideKana(!hideKana)} className={`py-2 text-xs rounded-lg border font-bold ${hideKana?'bg-slate-800 text-white':'bg-white text-slate-600'}`}>遮假名</button>
-                                        <button onClick={() => setHideMeaning(!hideMeaning)} className={`py-2 text-xs rounded-lg border font-bold ${hideMeaning?'bg-slate-800 text-white':'bg-white text-slate-600'}`}>遮中文</button>
-                                    </div>
-                                </div>
-                            );
-                        })()}
-
-                        {currentTab === 'listening' && currentVocabList.length > 0 && listeningPlaylist.length > 0 && (() => {
-                            // 透過播放清單抓出實際單字
-                            const word = currentVocabList[listeningPlaylist[listeningIndex]];
-                            if (!word) return null;
-
-                            return (
-                                <div className="flex flex-col flex-1 h-full">
-                                    {/* 上半部：單字顯示面板 */}
-                                    <div className="bg-white rounded-2xl shadow-sm p-6 text-center mb-4 flex-1 flex flex-col justify-center">
-                                        <div className="text-5xl font-bold py-2 text-slate-800">{word.kanji}</div>
-                                        <div className="flex justify-center items-center gap-2 py-2">
-                                            <span className="text-2xl text-slate-600">{word.kana}</span>
-                                            {word.accent !== undefined && <span className="text-xs bg-blue-50 text-blue-500 px-2 rounded-full">[{word.accent}]</span>}
-                                        </div>
-                                        <hr className="my-3 opacity-50" />
-                                        <div className="text-xl py-2 text-blue-600 font-bold">{word.meaning}</div>
-
-                                        {/* 例句與筆記 */}
-                                        { (word.example || word.notes) && (
-                                            <div className="mt-4 text-left bg-slate-50 p-3 rounded-lg text-sm border border-slate-100">
-                                                {word.example && (
-                                                    <div className="mb-2">
-                                                        <div className="flex items-center mb-1">
-                                                            <span className="font-bold text-slate-500 mr-1">例:</span>
-                                                            <span className="text-slate-700">{word.example.split(' (')[0]}</span>
-                                                        </div>
-                                                        {word.example.includes('(') && (
-                                                            <div className="text-slate-400 text-xs ml-6">
-                                                                ({word.example.split('(')[1]}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                                {word.notes && (
-                                                    <div className="border-t border-slate-200 pt-2 mt-1">
-                                                        <span className="font-bold text-amber-600 mr-2">註:</span>
-                                                        <span className="text-slate-600 italic">{word.notes}</span>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {/* 下半部：MP3 控制面板 */}
-                                    <div className="mt-auto bg-slate-800 text-white rounded-3xl p-6 shadow-xl mb-2 flex flex-col gap-5">
-                                        <div className="flex justify-between items-center text-xs font-bold px-1 mb-1">
-                                            <div className="flex gap-4">
-                                                <button onClick={() => setIsListeningRandom(!isListeningRandom)} className={`flex items-center gap-1 transition-colors ${isListeningRandom ? 'text-blue-400' : 'text-slate-400 hover:text-slate-200'}`}>
-                                                    <i className="fas fa-random"></i> {isListeningRandom ? '隨機 (洗牌)' : '循序'}
-                                                </button>
-                                                <button onClick={() => setIsListeningLoop(!isListeningLoop)} className={`flex items-center gap-1 transition-colors ${isListeningLoop ? 'text-blue-400' : 'text-slate-400 hover:text-slate-200'}`}>
-                                                    <i className="fas fa-redo"></i> {isListeningLoop ? '循環: 開' : '循環: 關'}
-                                                </button>
-                                            </div>
-                                            <span className="text-slate-400 bg-slate-700/50 px-2 py-1 rounded-full">{listeningIndex + 1} / {currentVocabList.length}</span>
-                                        </div>
-
-                                        <div className="flex justify-between items-center px-1">
-                                            <button onClick={() => handleListeningJump(-10)} className="text-slate-400 hover:text-white text-lg active:scale-90 transition-all"><i className="fas fa-backward"></i></button>
-                                            <button onClick={() => handleListeningJump(-1)} className="text-slate-400 hover:text-white text-xl active:scale-90 transition-all"><i className="fas fa-step-backward"></i></button>
-
-                                            <button onClick={handleStopClick} className="text-slate-400 hover:text-red-400 text-xl active:scale-90 transition-all"><i className="fas fa-stop"></i></button>
-
-                                            <button onClick={handlePlayPauseClick} className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center text-2xl shadow-lg hover:scale-105 active:scale-95 transition-all text-white">
-                                                <i className={`fas ${isPlaying ? 'fa-pause' : 'fa-play pl-1'}`}></i>
-                                            </button>
-
-                                            <button onClick={() => handleListeningJump(1)} className="text-slate-400 hover:text-white text-xl active:scale-90 transition-all"><i className="fas fa-step-forward"></i></button>
-                                            <button onClick={() => handleListeningJump(10)} className="text-slate-400 hover:text-white text-lg active:scale-90 transition-all"><i className="fas fa-forward"></i></button>
-                                        </div>
-                                    </div>
-                                </div>
-                            );
-                        })()}
-
-                        {currentTab === 'exam_setup' && (
-                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                                <h2 className="text-lg font-bold mb-4 border-b pb-2"><i className="fas fa-sliders-h mr-2"></i>測驗設定</h2>
-
-                                <div className="mb-6">
-                                    <p className="text-sm font-bold text-slate-500 mb-2">要遮擋哪些欄位？(最多選 2 個)</p>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        <label className={`block text-center py-2 border rounded-xl font-bold cursor-pointer transition-colors ${examConfig.hideKanji?'bg-blue-600 text-white border-blue-600 shadow-md':'bg-slate-50 text-slate-500'}`}>
-                                            <input type="checkbox" className="hidden" checked={examConfig.hideKanji} onChange={(e)=>setExamConfig({...examConfig, hideKanji: e.target.checked})} /> 漢字
-                                        </label>
-                                        <label className={`block text-center py-2 border rounded-xl font-bold cursor-pointer transition-colors ${examConfig.hideKana?'bg-blue-600 text-white border-blue-600 shadow-md':'bg-slate-50 text-slate-500'}`}>
-                                            <input type="checkbox" className="hidden" checked={examConfig.hideKana} onChange={(e)=>setExamConfig({...examConfig, hideKana: e.target.checked})} /> 假名
-                                        </label>
-                                        <label className={`block text-center py-2 border rounded-xl font-bold cursor-pointer transition-colors ${examConfig.hideMeaning?'bg-blue-600 text-white border-blue-600 shadow-md':'bg-slate-50 text-slate-500'}`}>
-                                            <input type="checkbox" className="hidden" checked={examConfig.hideMeaning} onChange={(e)=>setExamConfig({...examConfig, hideMeaning: e.target.checked})} /> 中文
-                                        </label>
-                                    </div>
-                                </div>
-
-                                <div className="mb-8">
-                                    <p className="text-sm font-bold text-slate-500 mb-2">抽考邏輯</p>
-                                    <select className="w-full p-3 border rounded-xl bg-slate-50 text-slate-700 font-bold outline-none focus:border-blue-500" value={examConfig.mode} onChange={(e)=>setExamConfig({...examConfig, mode: e.target.value})}>
-                                        <option value="random">完全隨機抽考</option>
-                                        <option value="weighted">弱點加權 (錯越多越容易出)</option>
-                                        <option value="mistakes">地獄錯題本 (只考曾經錯過的)</option>
-                                    </select>
-                                </div>
-
-                                <button onClick={startExam} className="w-full bg-slate-800 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-slate-700 transition-colors">
-                                    <i className="fas fa-play mr-2"></i>開始測驗
+                    {/* 原本的主程式內容，在 Windows 會直接顯示，在 iOS 會在點擊後顯示 */}
+                    <div className="max-w-xl mx-auto min-h-screen flex flex-col bg-slate-50">
+                        <div className="bg-white shadow-sm sticky top-0 z-10">
+                            <div className="p-4 flex justify-between items-center">
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學</h1>
+                                <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
+                                    <i className="fas fa-download mr-1"></i>匯出紀錄
                                 </button>
+                            </div>
+
+                            <div className="px-4 pb-2 flex gap-2 overflow-x-auto">
+                                {availableLevels.map(lvl => (
+                                    <label key={lvl} className="flex items-center gap-1 bg-blue-50 px-2 py-1 rounded cursor-pointer text-sm select-none hover:bg-blue-100">
+                                        <input type="checkbox" className="accent-blue-600"
+                                            checked={selectedLevels.includes(lvl)}
+                                            onChange={(e) => {
+                                                if(e.target.checked) setSelectedLevels([...selectedLevels, lvl]);
+                                                else if(selectedLevels.length > 1) setSelectedLevels(selectedLevels.filter(l => l !== lvl));
+                                            }}
+                                        />
+                                        {lvl}
+                                    </label>
+                                ))}
+                            </div>
+
+                            <div className="flex border-t">
+                                <button onClick={() => setCurrentTab('study')} className={`flex-1 py-3 text-sm tab-btn ${currentTab === 'study' ? 'active' : 'text-slate-500'}`}>學習模式</button>
+                                <button onClick={() => setCurrentTab('listening')} className={`flex-1 py-3 text-sm tab-btn ${currentTab === 'listening' ? 'active' : 'text-slate-500'}`}>聽力模式</button>
+                                <button onClick={() => setCurrentTab('exam_setup')} className={`flex-1 py-3 text-sm tab-btn ${currentTab.startsWith('exam') ? 'active' : 'text-slate-500'}`}>考試模式</button>
+                            </div>
+                        </div>
+
+                        {/* 右下角浮動篩選按鈕 (FAB) */}
+                        <button
+                            onClick={() => setShowFilterModal(true)}
+                            className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 text-white rounded-full shadow-2xl flex items-center justify-center text-2xl hover:scale-105 active:scale-95 transition-all z-40 border-2 border-white"
+                        >
+                            <i className="fas fa-filter"></i>
+                            {selectedCategories.length > 0 && (
+                                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center border-2 border-white">
+                                    {selectedCategories.length}
+                                </span>
+                            )}
+                        </button>
+
+                        {/* 分類篩選器彈窗 (Modal) */}
+                        {showFilterModal && (
+                            <div className="fixed inset-0 bg-slate-900/60 z-50 flex justify-center items-center p-4 backdrop-blur-sm">
+                                <div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl relative">
+                                    <button onClick={() => setShowFilterModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform">
+                                        <i className="fas fa-times text-2xl"></i>
+                                    </button>
+
+                                    <h2 className="text-xl font-bold mb-2 text-slate-800">
+                                        <i className="fas fa-tags mr-2 text-blue-500"></i>單字類別篩選
+                                    </h2>
+                                    <p className="text-xs text-slate-500 mb-5">
+                                        {selectedCategories.length === 0
+                                            ? "目前未套用篩選，將顯示所選級別的所有單字。"
+                                            : "目前僅顯示符合以下勾選類別的單字。"}
+                                    </p>
+
+                                    <div className="grid grid-cols-3 gap-2 max-h-[50vh] overflow-y-auto p-1">
+                                        {availableCategories.length === 0 ? (
+                                            <div className="col-span-3 text-center text-slate-400 text-sm py-4">
+                                                目前選取的級別中尚未有分類標籤的單字。
+                                            </div>
+                                        ) : (
+                                            availableCategories.map(cat => (
+                                                <label key={cat} className={`flex flex-col items-center justify-center py-3 px-1 border rounded-xl cursor-pointer text-sm font-bold transition-all active:scale-95 ${selectedCategories.includes(cat) ? 'bg-blue-100 border-blue-500 text-blue-700 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
+                                                    <input type="checkbox" className="hidden"
+                                                        checked={selectedCategories.includes(cat)}
+                                                        onChange={(e) => {
+                                                            if (e.target.checked) setSelectedCategories([...selectedCategories, cat]);
+                                                            else setSelectedCategories(selectedCategories.filter(c => c !== cat));
+                                                        }}
+                                                    />
+                                                    {cat}
+                                                </label>
+                                            ))
+                                        )}
+                                    </div>
+
+                                    <div className="mt-6 flex justify-between gap-3">
+                                        <button onClick={() => setSelectedCategories([])} className="flex-1 py-3.5 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors">清空重設</button>
+                                        <button onClick={() => setShowFilterModal(false)} className="flex-[2] py-3.5 bg-blue-600 text-white rounded-xl font-bold shadow-lg hover:bg-blue-700 transition-colors">完成套用</button>
+                                    </div>
+                                </div>
                             </div>
                         )}
 
-                        {currentTab === 'exam' && examQuestions.length > 0 && (() => {
-                            const q = examQuestions[examIndex];
+                        <div className="p-4 flex-1 flex flex-col">
+                            {currentTab === 'study' && currentVocabList.length > 0 && (() => {
+                                const word = currentVocabList[studyIndex];
+                                if (!word) return null;
+                                const s = stats[word.id] || {correct:0, wrong:0};
+                                const errRate = (s.correct+s.wrong)===0 ? 0 : Math.round(s.wrong/(s.correct+s.wrong)*100);
 
-                            const renderOptions = (title, field, options) => {
-                                if (!options) return null;
                                 return (
-                                    <div className="mb-4">
-                                        <div className="text-xs font-bold text-slate-400 mb-2">選擇正確的{title}</div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            {options.map((opt, i) => {
-                                                const isSelected = examAnswers[field] === opt;
-                                                const isCorrectAns = q.word[field] === opt;
-                                                let btnClass = "py-3 px-2 text-sm rounded-lg border font-bold transition-colors ";
+                                    <div className="flex flex-col flex-1">
+                                        <div className="flex justify-between text-xs text-slate-500 mb-2">
+                                            <span>
+                                                {(() => {
+                                                    const total = currentVocabList.length;
+                                                    // 動態計算：比對「當前的單字庫」與「歷史瀏覽紀錄」，算出當前列表有多少單字被看過
+                                                    const viewedCount = currentVocabList.filter(word => viewedIds.has(word.id)).length;
+                                                    const percentage = total > 0 ? Math.round((viewedCount / total) * 100) : 0;
+                                                    return `${percentage}% (${viewedCount}/${total})`;
+                                                })()}
+                                            </span>
+                                            <span>
+                                                錯題率: <b className="text-red-500">{errRate}%</b>
+                                            </span>
+                                        </div>
 
-                                                if (!examSubmitted) {
-                                                    btnClass += isSelected ? "bg-blue-100 border-blue-500 text-blue-700 shadow-sm" : "bg-white text-slate-600 hover:bg-slate-50";
-                                                } else {
-                                                    if (isCorrectAns) btnClass += "bg-green-100 border-green-500 text-green-700";
-                                                    else if (isSelected && !isCorrectAns) btnClass += "bg-red-100 border-red-500 text-red-700 line-through";
-                                                    else btnClass += "bg-slate-50 text-slate-400 border-slate-200 opacity-50";
-                                                }
-                                                return (
-                                                    <button key={i} disabled={examSubmitted} onClick={() => setExamAnswers({...examAnswers, [field]: opt})} className={btnClass}>
-                                                        {opt}
-                                                    </button>
-                                                );
-                                            })}
+                                        <div className="bg-white rounded-2xl shadow-sm p-6 text-center relative mb-4">
+                                            {/* 原本單字的發音按鈕 (維持在右上角) */}
+                                            <button
+                                                onClick={() => speak(word, false)}
+                                                className={`absolute top-4 right-4 text-xl ...`}
+                                            >
+                                                <i className="fas fa-volume-up"></i>
+                                            </button>
+
+                                            {/* 左上角：隨機/循序切換按鈕 (與右上角喇叭對稱) */}
+                                            <button
+                                                onClick={() => setIsRandomStudy(!isRandomStudy)}
+                                                className={`absolute top-4 left-4 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm border transition-all active:scale-95 ${isRandomStudy ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'}`}
+                                            >
+                                                <i className="fas fa-random mr-1"></i>{isRandomStudy ? '隨機' : '循序'}
+                                            </button>
+
+                                            {/* 左右高型懸浮切換按鈕與核心單字顯示區 */}
+                                            <div className="flex items-stretch justify-between mt-8 mb-2 gap-3 px-1">
+                                                {/* 上一頁按鈕 (左側) */}
+                                                <button
+                                                    onClick={() => setStudyIndex((studyIndex - 1 + currentVocabList.length) % currentVocabList.length)}
+                                                    className="w-10 rounded-xl bg-slate-50 border border-slate-100 shadow-sm text-slate-400 hover:text-slate-600 hover:bg-slate-200 active:scale-95 transition-all flex items-center justify-center"
+                                                >
+                                                    <i className="fas fa-chevron-left"></i>
+                                                </button>
+
+                                                {/* 單字核心區 (置中) */}
+                                                <div className="flex-1 flex flex-col items-center justify-center">
+                                                    <div className={`text-5xl font-bold py-2 ${hideKanji ? 'blur-md bg-slate-200 text-transparent select-none' : 'text-slate-800'}`} onClick={() => setHideKanji(false)}>
+                                                        {word.kanji}
+                                                    </div>
+                                                    <div className="flex justify-center items-center gap-2 py-2">
+                                                        <span className={`text-2xl text-slate-600 ${hideKana ? 'blur-md bg-slate-200 text-transparent select-none' : ''}`} onClick={() => setHideKana(false)}>
+                                                            {word.kana}
+                                                        </span>
+                                                        {word.accent !== undefined && <span className="text-xs bg-blue-50 text-blue-500 px-2 rounded-full">[{word.accent}]</span>}
+                                                    </div>
+                                                </div>
+
+                                                {/* 下一頁按鈕 (右側) */}
+                                                <button
+                                                    onClick={() => setStudyIndex(isRandomStudy ? Math.floor(Math.random() * currentVocabList.length) : (studyIndex + 1) % currentVocabList.length)}
+                                                    className="w-10 rounded-xl bg-slate-50 border border-slate-100 shadow-sm text-slate-400 hover:text-slate-600 hover:bg-slate-200 active:scale-95 transition-all flex items-center justify-center"
+                                                >
+                                                    <i className="fas fa-chevron-right"></i>
+                                                </button>
+                                            </div>
+
+                                            <hr className="my-3 opacity-50" />
+                                            <div className={`text-xl py-2 ${hideMeaning ? 'blur-md bg-slate-200 text-transparent select-none' : 'text-blue-600 font-bold'}`} onClick={() => setHideMeaning(false)}>{word.meaning}</div>
+
+                                            {/* 例句與筆記區塊 */}
+                                            { (word.example || word.notes) && (
+                                                <div className="mt-4 text-left bg-slate-50 p-3 rounded-lg text-sm border border-slate-100">
+                                                    {/* 例句部分 */}
+                                                    {word.example && (
+                                                        <div className="mb-2">
+                                                            <div className="flex items-center mb-1">
+                                                                <button
+                                                                    onClick={() => speak(word, true)}
+                                                                    className="mr-2 text-slate-400 hover:text-blue-500 transition-colors"
+                                                                >
+                                                                    <i className="fas fa-volume-down text-sm"></i>
+                                                                </button>
+                                                                <span className="font-bold text-slate-500 mr-1">例:</span>
+                                                                <span className="text-slate-700">{word.example.split(' (')[0]}</span>
+                                                            </div>
+                                                            {word.example.includes('(') && (
+                                                                <div className="text-slate-400 text-xs ml-8">
+                                                                    ({word.example.split('(')[1]}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+
+                                                    {/* 筆記部分 (新增這段) */}
+                                                    {word.notes && (
+                                                        <div className="border-t border-slate-200 pt-2 mt-1">
+                                                            <span className="font-bold text-amber-600 mr-2">註:</span>
+                                                            <span className="text-slate-600 italic">{word.notes}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="grid grid-cols-3 gap-2 mb-4">
+                                            <button onClick={() => setHideKanji(!hideKanji)} className={`py-2 text-xs rounded-lg border font-bold ${hideKanji?'bg-slate-800 text-white':'bg-white text-slate-600'}`}>遮漢字</button>
+                                            <button onClick={() => setHideKana(!hideKana)} className={`py-2 text-xs rounded-lg border font-bold ${hideKana?'bg-slate-800 text-white':'bg-white text-slate-600'}`}>遮假名</button>
+                                            <button onClick={() => setHideMeaning(!hideMeaning)} className={`py-2 text-xs rounded-lg border font-bold ${hideMeaning?'bg-slate-800 text-white':'bg-white text-slate-600'}`}>遮中文</button>
                                         </div>
                                     </div>
                                 );
-                            };
+                            })()}
 
-                            const allAnswered = (!examConfig.hideKanji || examAnswers.kanji) &&
-                                                (!examConfig.hideKana || examAnswers.kana) &&
-                                                (!examConfig.hideMeaning || examAnswers.meaning);
+                            {currentTab === 'listening' && currentVocabList.length > 0 && listeningPlaylist.length > 0 && (() => {
+                                // 透過播放清單抓出實際單字
+                                const word = currentVocabList[listeningPlaylist[listeningIndex]];
+                                if (!word) return null;
 
-                            return (
-                                <div className="flex flex-col flex-1">
-                                    <div className="text-center text-sm font-bold text-slate-500 mb-4">
-                                        測驗進度：{examIndex + 1} / {examQuestions.length}
-                                    </div>
+                                return (
+                                    <div className="flex flex-col flex-1 h-full">
+                                        {/* 上半部：單字顯示面板 */}
+                                        <div className="bg-white rounded-2xl shadow-sm p-6 text-center mb-4 flex-1 flex flex-col justify-center">
+                                            <div className="text-5xl font-bold py-2 text-slate-800">{word.kanji}</div>
+                                            <div className="flex justify-center items-center gap-2 py-2">
+                                                <span className="text-2xl text-slate-600">{word.kana}</span>
+                                                {word.accent !== undefined && <span className="text-xs bg-blue-50 text-blue-500 px-2 rounded-full">[{word.accent}]</span>}
+                                            </div>
+                                            <hr className="my-3 opacity-50" />
+                                            <div className="text-xl py-2 text-blue-600 font-bold">{word.meaning}</div>
 
-                                    <div className="bg-white rounded-2xl shadow-sm p-6 mb-4 border border-slate-100">
-                                        <div className="text-center mb-6">
-                                            <div className="text-xs font-bold text-blue-400 mb-2">請看題</div>
-                                            {!examConfig.hideKanji && <div className="text-4xl font-bold mb-2">{q.word.kanji}</div>}
-                                            {!examConfig.hideKana && <div className="text-2xl text-slate-600 mb-2">{q.word.kana}</div>}
-                                            {!examConfig.hideMeaning && <div className="text-xl text-blue-600 font-bold">{q.word.meaning}</div>}
+                                            {/* 例句與筆記 */}
+                                            { (word.example || word.notes) && (
+                                                <div className="mt-4 text-left bg-slate-50 p-3 rounded-lg text-sm border border-slate-100">
+                                                    {word.example && (
+                                                        <div className="mb-2">
+                                                            <div className="flex items-center mb-1">
+                                                                <span className="font-bold text-slate-500 mr-1">例:</span>
+                                                                <span className="text-slate-700">{word.example.split(' (')[0]}</span>
+                                                            </div>
+                                                            {word.example.includes('(') && (
+                                                                <div className="text-slate-400 text-xs ml-6">
+                                                                    ({word.example.split('(')[1]}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    {word.notes && (
+                                                        <div className="border-t border-slate-200 pt-2 mt-1">
+                                                            <span className="font-bold text-amber-600 mr-2">註:</span>
+                                                            <span className="text-slate-600 italic">{word.notes}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
 
-                                        <hr className="my-4 border-slate-100" />
+                                        {/* 下半部：MP3 控制面板 */}
+                                        <div className="mt-auto bg-slate-800 text-white rounded-3xl p-6 shadow-xl mb-2 flex flex-col gap-5">
+                                            <div className="flex justify-between items-center text-xs font-bold px-1 mb-1">
+                                                <div className="flex gap-4">
+                                                    <button onClick={() => setIsListeningRandom(!isListeningRandom)} className={`flex items-center gap-1 transition-colors ${isListeningRandom ? 'text-blue-400' : 'text-slate-400 hover:text-slate-200'}`}>
+                                                        <i className="fas fa-random"></i> {isListeningRandom ? '隨機 (洗牌)' : '循序'}
+                                                    </button>
+                                                    <button onClick={() => setIsListeningLoop(!isListeningLoop)} className={`flex items-center gap-1 transition-colors ${isListeningLoop ? 'text-blue-400' : 'text-slate-400 hover:text-slate-200'}`}>
+                                                        <i className="fas fa-redo"></i> {isListeningLoop ? '循環: 開' : '循環: 關'}
+                                                    </button>
+                                                </div>
+                                                <span className="text-slate-400 bg-slate-700/50 px-2 py-1 rounded-full">{listeningIndex + 1} / {currentVocabList.length}</span>
+                                            </div>
 
-                                        {renderOptions("漢字", "kanji", q.optionsKanji)}
-                                        {renderOptions("假名", "kana", q.optionsKana)}
-                                        {renderOptions("中文", "meaning", q.optionsMeaning)}
+                                            <div className="flex justify-between items-center px-1">
+                                                <button onClick={() => handleListeningJump(-10)} className="text-slate-400 hover:text-white text-lg active:scale-90 transition-all"><i className="fas fa-backward"></i></button>
+                                                <button onClick={() => handleListeningJump(-1)} className="text-slate-400 hover:text-white text-xl active:scale-90 transition-all"><i className="fas fa-step-backward"></i></button>
+
+                                                <button onClick={handleStopClick} className="text-slate-400 hover:text-red-400 text-xl active:scale-90 transition-all"><i className="fas fa-stop"></i></button>
+
+                                                <button onClick={handlePlayPauseClick} className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center text-2xl shadow-lg hover:scale-105 active:scale-95 transition-all text-white">
+                                                    <i className={`fas ${isPlaying ? 'fa-pause' : 'fa-play pl-1'}`}></i>
+                                                </button>
+
+                                                <button onClick={() => handleListeningJump(1)} className="text-slate-400 hover:text-white text-xl active:scale-90 transition-all"><i className="fas fa-step-forward"></i></button>
+                                                <button onClick={() => handleListeningJump(10)} className="text-slate-400 hover:text-white text-lg active:scale-90 transition-all"><i className="fas fa-forward"></i></button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+
+                            {currentTab === 'exam_setup' && (
+                                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                                    <h2 className="text-lg font-bold mb-4 border-b pb-2"><i className="fas fa-sliders-h mr-2"></i>測驗設定</h2>
+
+                                    <div className="mb-6">
+                                        <p className="text-sm font-bold text-slate-500 mb-2">要遮擋哪些欄位？(最多選 2 個)</p>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <label className={`block text-center py-2 border rounded-xl font-bold cursor-pointer transition-colors ${examConfig.hideKanji?'bg-blue-600 text-white border-blue-600 shadow-md':'bg-slate-50 text-slate-500'}`}>
+                                                <input type="checkbox" className="hidden" checked={examConfig.hideKanji} onChange={(e)=>setExamConfig({...examConfig, hideKanji: e.target.checked})} /> 漢字
+                                            </label>
+                                            <label className={`block text-center py-2 border rounded-xl font-bold cursor-pointer transition-colors ${examConfig.hideKana?'bg-blue-600 text-white border-blue-600 shadow-md':'bg-slate-50 text-slate-500'}`}>
+                                                <input type="checkbox" className="hidden" checked={examConfig.hideKana} onChange={(e)=>setExamConfig({...examConfig, hideKana: e.target.checked})} /> 假名
+                                            </label>
+                                            <label className={`block text-center py-2 border rounded-xl font-bold cursor-pointer transition-colors ${examConfig.hideMeaning?'bg-blue-600 text-white border-blue-600 shadow-md':'bg-slate-50 text-slate-500'}`}>
+                                                <input type="checkbox" className="hidden" checked={examConfig.hideMeaning} onChange={(e)=>setExamConfig({...examConfig, hideMeaning: e.target.checked})} /> 中文
+                                            </label>
+                                        </div>
                                     </div>
 
-                                    {!examSubmitted ? (
-                                        <button
-                                            onClick={submitExamAnswer}
-                                            disabled={!allAnswered}
-                                            className={`py-4 rounded-xl font-bold w-full mt-auto transition-all ${allAnswered ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
-                                        >
-                                            確認答案
-                                        </button>
-                                    ) : (
-                                        <button
-                                            onClick={() => {
-                                                if (examIndex + 1 < examQuestions.length) {
-                                                    setExamIndex(examIndex + 1);
-                                                    setExamAnswers({});
-                                                    setExamSubmitted(false);
-                                                } else {
-                                                    alert("測驗完成！成績已記錄。");
-                                                    setCurrentTab('exam_setup');
-                                                }
-                                            }}
-                                            className="py-4 bg-slate-800 text-white rounded-xl font-bold w-full mt-auto shadow-lg"
-                                        >
-                                            {examIndex + 1 < examQuestions.length ? "下一題" : "完成測驗"}
-                                        </button>
-                                    )}
+                                    <div className="mb-8">
+                                        <p className="text-sm font-bold text-slate-500 mb-2">抽考邏輯</p>
+                                        <select className="w-full p-3 border rounded-xl bg-slate-50 text-slate-700 font-bold outline-none focus:border-blue-500" value={examConfig.mode} onChange={(e)=>setExamConfig({...examConfig, mode: e.target.value})}>
+                                            <option value="random">完全隨機抽考</option>
+                                            <option value="weighted">弱點加權 (錯越多越容易出)</option>
+                                            <option value="mistakes">地獄錯題本 (只考曾經錯過的)</option>
+                                        </select>
+                                    </div>
+
+                                    <button onClick={startExam} className="w-full bg-slate-800 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-slate-700 transition-colors">
+                                        <i className="fas fa-play mr-2"></i>開始測驗
+                                    </button>
                                 </div>
-                            );
-                        })()}
+                            )}
+
+                            {currentTab === 'exam' && examQuestions.length > 0 && (() => {
+                                const q = examQuestions[examIndex];
+
+                                const renderOptions = (title, field, options) => {
+                                    if (!options) return null;
+                                    return (
+                                        <div className="mb-4">
+                                            <div className="text-xs font-bold text-slate-400 mb-2">選擇正確的{title}</div>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                {options.map((opt, i) => {
+                                                    const isSelected = examAnswers[field] === opt;
+                                                    const isCorrectAns = q.word[field] === opt;
+                                                    let btnClass = "py-3 px-2 text-sm rounded-lg border font-bold transition-colors ";
+
+                                                    if (!examSubmitted) {
+                                                        btnClass += isSelected ? "bg-blue-100 border-blue-500 text-blue-700 shadow-sm" : "bg-white text-slate-600 hover:bg-slate-50";
+                                                    } else {
+                                                        if (isCorrectAns) btnClass += "bg-green-100 border-green-500 text-green-700";
+                                                        else if (isSelected && !isCorrectAns) btnClass += "bg-red-100 border-red-500 text-red-700 line-through";
+                                                        else btnClass += "bg-slate-50 text-slate-400 border-slate-200 opacity-50";
+                                                    }
+                                                    return (
+                                                        <button key={i} disabled={examSubmitted} onClick={() => setExamAnswers({...examAnswers, [field]: opt})} className={btnClass}>
+                                                            {opt}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                };
+
+                                const allAnswered = (!examConfig.hideKanji || examAnswers.kanji) &&
+                                                    (!examConfig.hideKana || examAnswers.kana) &&
+                                                    (!examConfig.hideMeaning || examAnswers.meaning);
+
+                                return (
+                                    <div className="flex flex-col flex-1">
+                                        <div className="text-center text-sm font-bold text-slate-500 mb-4">
+                                            測驗進度：{examIndex + 1} / {examQuestions.length}
+                                        </div>
+
+                                        <div className="bg-white rounded-2xl shadow-sm p-6 mb-4 border border-slate-100">
+                                            <div className="text-center mb-6">
+                                                <div className="text-xs font-bold text-blue-400 mb-2">請看題</div>
+                                                {!examConfig.hideKanji && <div className="text-4xl font-bold mb-2">{q.word.kanji}</div>}
+                                                {!examConfig.hideKana && <div className="text-2xl text-slate-600 mb-2">{q.word.kana}</div>}
+                                                {!examConfig.hideMeaning && <div className="text-xl text-blue-600 font-bold">{q.word.meaning}</div>}
+                                            </div>
+
+                                            <hr className="my-4 border-slate-100" />
+
+                                            {renderOptions("漢字", "kanji", q.optionsKanji)}
+                                            {renderOptions("假名", "kana", q.optionsKana)}
+                                            {renderOptions("中文", "meaning", q.optionsMeaning)}
+                                        </div>
+
+                                        {!examSubmitted ? (
+                                            <button
+                                                onClick={submitExamAnswer}
+                                                disabled={!allAnswered}
+                                                className={`py-4 rounded-xl font-bold w-full mt-auto transition-all ${allAnswered ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+                                            >
+                                                確認答案
+                                            </button>
+                                        ) : (
+                                            <button
+                                                onClick={() => {
+                                                    if (examIndex + 1 < examQuestions.length) {
+                                                        setExamIndex(examIndex + 1);
+                                                        setExamAnswers({});
+                                                        setExamSubmitted(false);
+                                                    } else {
+                                                        alert("測驗完成！成績已記錄。");
+                                                        setCurrentTab('exam_setup');
+                                                    }
+                                                }}
+                                                className="py-4 bg-slate-800 text-white rounded-xl font-bold w-full mt-auto shadow-lg"
+                                            >
+                                                {examIndex + 1 < examQuestions.length ? "下一題" : "完成測驗"}
+                                            </button>
+                                        )}
+                                    </div>
+                                );
+                            })()}
+                        </div>
                     </div>
-                </div>
+                </React.Fragment>
             );
         }
 
