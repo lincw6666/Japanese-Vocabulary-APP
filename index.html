@@ -30,19 +30,6 @@
         const { useState, useEffect, useMemo } = React;
 
         function App() {
-            // 在 App() 函數內加入這兩個狀態
-            const [isUnlocked, setIsUnlocked] = useState(false);
-
-            // 建立一個處理點擊的函數
-            const handleGlobalUnlock = () => {
-                // 建立一個空的音訊物件並播放
-                const audio = new Audio('');
-                audio.play().then(() => {
-                    setIsUnlocked(true);
-                    console.log("iOS 音訊權限已解鎖");
-                });
-            };
-
             // 成績讀寫防護機制
             const loadStats = () => {
                 try {
@@ -489,19 +476,42 @@
 
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+            // 確保你的狀態定義是這樣 (直接設為 true 如果不是 iOS)
+            const [isUnlocked, setIsUnlocked] = useState(!isIOS);
+
+            // 解鎖函數單純化
+            const handleGlobalUnlock = () => {
+                // 建立一個空的 Context
+                const audio = new Audio('');
+                audio.play().then(() => {
+                    setIsUnlocked(true); // 只要解鎖成功，就切換狀態
+                }).catch(e => {
+                    console.error("解鎖失敗:", e);
+                    setIsUnlocked(true); // 失敗也放行，避免使用者卡死
+                });
+            };
+
             return (
                 <React.Fragment>
                     {/* 只有在 iOS 且尚未解鎖時，才顯示啟動按鈕 */}
                     {isIOS && !isUnlocked && (
-                        <div className="fixed inset-0 bg-blue-600 z-[9999] flex flex-col items-center justify-center text-white p-6 text-center">
-                            <i className="fas fa-volume-up text-6xl mb-6"></i>
-                            <h1 className="text-2xl font-bold mb-2">準備開始學習！</h1>
-                            <p className="mb-8 opacity-80">iOS 裝置需要您點擊下方按鈕以啟用語音播放功能。</p>
+                        <div style={{
+                            position: 'fixed',
+                            top: 0, left: 0, width: '100%', height: '100%',
+                            backgroundColor: '#2563eb',
+                            zIndex: 9999,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            color: 'white'
+                        }}>
+                            <h1 style={{ marginBottom: '20px' }}>歡迎開始學習</h1>
                             <button
                                 onClick={handleGlobalUnlock}
-                                className="bg-white text-blue-600 px-10 py-4 rounded-full font-bold shadow-2xl active:scale-95 transition-transform"
+                                style={{ padding: '20px 40px', fontSize: '20px', borderRadius: '50px', border: 'none', background: 'white', color: '#2563eb', fontWeight: 'bold' }}
                             >
-                                點擊此處啟用聲音
+                                點擊此處開始
                             </button>
                         </div>
                     )}
