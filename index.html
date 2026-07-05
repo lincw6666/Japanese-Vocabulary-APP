@@ -236,10 +236,11 @@
                         if (item.delay) await new Promise(r => setTimeout(r, item.delay));
                         if (isCancelled || sequenceIdRef.current !== seqId) return;
 
-                        // 【新增】帶有 Retry 機制的非同步播放函數
+                        // 【新增】帶有 Retry 機制與 Error Alert 的非同步播放函數
                         const playWithRetry = async (url, maxRetries = 10) => {
+                            let lastError = null;
+
                             for (let attempt = 1; attempt <= maxRetries; attempt++) {
-                                // 確保在 Retry 過程中如果使用者按下暫停或切換，能立刻中斷
                                 if (isCancelled || sequenceIdRef.current !== seqId) return;
 
                                 try {
@@ -247,36 +248,50 @@
                                         const audio = new Audio(url);
                                         currentAudioRef.current = audio;
 
-                                        // 核心細節：強制瀏覽器先辨識並預載資源，這對 iOS 非常重要
-                                        audio.load();
-
-                                        // 正常播完
-                                        audio.onended = () => resolve();
-
-                                        // 檔案載入失敗 (例如 404 找不到檔案)
-                                        audio.onerror = () => {
-                                            reject(new Error("Audio loading error"));
+                                        // 正常播完：務必清空 src 釋放 iOS 的硬體解碼器記憶體
+                                        audio.onended = () => {
+                                            audio.src = "";
+                                            resolve();
                                         };
 
-                                        // 播放被系統阻擋或資源競爭導致中斷
+                                        // 載入失敗 (例如 404 找不到檔案)
+                                        audio.onerror = () => {
+                                            const errorDetail = audio.error ? `Code: ${audio.error.code}, Msg: ${audio.error.message}` : "Unknown File Error";
+                                            reject(new Error(`檔案載入失敗 (${errorDetail})`));
+                                        };
+
+                                        // 播放被系統阻擋或資源中斷
                                         audio.play().catch((err) => {
                                             reject(err);
                                         });
                                     });
 
-                                    // 如果順利 resolve() 執行到這裡，代表播完了，直接 return 跳出 Retry 迴圈
-                                    return;
+                                    return; // 播放成功，跳出 Retry 迴圈
 
                                 } catch (error) {
-                                    console.warn(`[播放失敗] 嘗試 ${attempt}/${maxRetries} 次: ${url}`);
+                                    lastError = error;
+                                    console.warn(`[播放失敗] 嘗試 ${attempt}/${maxRetries} 次: ${url}`, error);
 
-                                    if (attempt === maxRetries) {
-                                        console.error(`已達最大重試上限，無奈跳過此語音: ${url}`);
-                                        return; // 真的不行就優雅地跳過，繼續播下一個，不卡死 APP
+                                    // 確保在失敗時也把當前卡住的 audio 清掉
+                                    if (currentAudioRef.current) {
+                                        currentAudioRef.current.src = "";
                                     }
 
-                                    // 【核心關鍵】：失敗後必須等待一小段時間 (200ms) 再重試。
-                                    // 否則電腦運算太快，10 次重試會在 1 毫秒內瞬間全部失敗，失去 Retry 的意義。
+                                    if (attempt === maxRetries) {
+                                        // 【觸發警告視窗】10 次都失敗，顯示詳細錯誤訊息
+                                        const errorMsg = `語音播放崩潰 (已重試 10 次)\n\n檔案: ${url}\n錯誤原因: ${lastError.name} - ${lastError.message}\n\n這可能是檔案遺失或 iOS 資源被卡死，系統已自動暫停播放。`;
+
+                                        console.error(errorMsg);
+                                        alert(errorMsg);
+
+                                        // 強制暫停聽力模式，避免狂彈錯誤視窗
+                                        setIsPlaying(false);
+                                        setIsStopped(true);
+
+                                        return;
+                                    }
+
+                                    // 失敗後等待 200ms 再重試
                                     await new Promise(r => setTimeout(r, 200));
                                 }
                             }
