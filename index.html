@@ -10,7 +10,6 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
-    <!-- 自動讀取同資料夾下的單字庫 (找不到檔案時會在背景略過，不會當機) -->
     <script src="vocab_N1.js" onerror="console.log('尚未建立 N1')"></script>
     <script src="vocab_N2.js" onerror="console.log('尚未建立 N2')"></script>
     <script src="vocab_N3.js" onerror="console.log('尚未建立 N3')"></script>
@@ -62,7 +61,6 @@
             const [selectedCategories, setSelectedCategories] = useState([]);
             const [showFilterModal, setShowFilterModal] = useState(false);
 
-            // 自動從已選的級別中，萃取出所有可用的分類標籤
             const availableCategories = useMemo(() => {
                 if (!window.VOCAB_DB) return [];
                 const catSet = new Set();
@@ -80,7 +78,6 @@
 
             const [studyIndex, setStudyIndex] = useState(0);
 
-            // 監聽瀏覽進度
             useEffect(() => {
                 if (currentVocabList.length > 0) {
                     setViewedIds(prev => {
@@ -91,7 +88,6 @@
                 }
             }, [studyIndex, currentVocabList]);
 
-            // 讀取本地的瀏覽紀錄 (因為 Set 不能直接被 JSON.parse，所以要轉換陣列)
             const loadViewedIds = () => {
                 try {
                     const stored = JSON.parse(localStorage.getItem('viewedVocabIds'));
@@ -103,7 +99,6 @@
 
             const [viewedIds, setViewedIds] = useState(loadViewedIds());
 
-            // 當 viewedIds 改變時，自動寫入 localStorage
             useEffect(() => {
                 try {
                     localStorage.setItem('viewedVocabIds', JSON.stringify(Array.from(viewedIds)));
@@ -130,7 +125,6 @@
                     if (window.VOCAB_DB[level]) list = list.concat(window.VOCAB_DB[level]);
                 });
 
-                // 如果有勾選類別，就進行第二層過濾 (只要單字有包含任一勾選的類別就保留)
                 if (selectedCategories.length > 0) {
                     list = list.filter(word =>
                         word.categories && word.categories.some(cat => selectedCategories.includes(cat))
@@ -139,15 +133,14 @@
                 return list;
             }, [selectedLevels, selectedCategories]);
 
-            // 當單字清單長度劇烈變化時 (例如套用篩選)，重置學習索引避免越界當機
             useEffect(() => {
                 setStudyIndex(0);
             }, [currentVocabList]);
 
-            // --- 聽力模式專用狀態、清單與快取 ---
-            const [listeningIndex, setListeningIndex] = useState(0); // 播放清單的 index
+            // --- 聽力模式專用狀態 ---
+            const [listeningIndex, setListeningIndex] = useState(0);
             const [isPlaying, setIsPlaying] = useState(false);
-            const [isStopped, setIsStopped] = useState(true); // 新增：區分「暫停」與「停止」
+            const [isStopped, setIsStopped] = useState(true);
             const [isListeningRandom, setIsListeningRandom] = useState(false);
             const [isListeningLoop, setIsListeningLoop] = useState(false);
             const [listeningPlaylist, setListeningPlaylist] = useState([]);
@@ -157,7 +150,6 @@
             const isListeningRandomRef = React.useRef(isListeningRandom);
             isListeningRandomRef.current = isListeningRandom;
 
-            // 支援起點偏移的洗牌清單產生器
             const generatePlaylist = (length, isRandom, startIndex = 0) => {
                 let list = Array.from({length}, (_, i) => i);
                 if (isRandom) {
@@ -166,7 +158,6 @@
                         [list[i], list[j]] = [list[j], list[i]];
                     }
                 } else {
-                    // 循序模式：將陣列偏移，讓當下的單字變成清單的第 0 首
                     if (startIndex > 0 && startIndex < length) {
                         list = [...list.slice(startIndex), ...list.slice(0, startIndex)];
                     }
@@ -174,7 +165,6 @@
                 return list;
             };
 
-            // 監聽單字庫改變 (移除 isListeningRandom 依賴，避免切換開關時立刻打斷當下清單)
             useEffect(() => {
                 const len = currentVocabList.length;
                 if (len > 0) {
@@ -187,13 +177,11 @@
                 }
             }, [currentVocabList]);
 
-            // 修正變數名稱，並移除已經用不到的 audioCache
             const currentAudioSourceRef = React.useRef(null);
             const sequenceIdRef = React.useRef(0);
 
             // 聽力模式播放引擎
             useEffect(() => {
-                // 如果不在聽力模式、按下暫停、或清單尚未建立，立刻停止
                 if (currentTab !== 'listening' || !isPlaying || currentVocabList.length === 0 || listeningPlaylist.length === 0) {
                     stopCurrentAudio();
                     sequenceIdRef.current++;
@@ -202,7 +190,6 @@
 
                 let isCancelled = false;
                 const seqId = ++sequenceIdRef.current;
-                // 改從 playlist 中抓取真正的單字索引
                 const word = currentVocabList[listeningPlaylist[listeningIndex]];
 
                 const runSequence = async () => {
@@ -210,23 +197,18 @@
                     let exampleZh = "";
 
                     if (word.example) {
-                        // 提取純日文例句 (移除平假名括號與中文翻譯)
                         exampleJa = word.example.split(' (')[0].replace(/\[.*?\]/g, '').trim();
-                        // 提取例句的中文翻譯 (移除右括號)
                         if (word.example.includes('(')) {
                             exampleZh = word.example.split('(')[1].replace(')', '').trim();
                         }
                     }
 
-                    // --- 聽力模式播放引擎 (本地資源版) ---
-                    // 定義播放佇列：單字(日) -> 單字(日) -> 中文(中)
                     const items = [
                         { url: `./audio/${word.id}_ja.mp3`, delay: 500 },
                         { url: `./audio/${word.id}_ja.mp3`, delay: 800 },
                         { url: `./audio/${word.id}_zh.mp3`, delay: 1000 }
                     ];
 
-                    // 如果有例句，加入 日文例句 -> 中文例句
                     if (word.example) {
                         items.push({ url: `./audio/${word.id}_ex_ja.mp3`, delay: 1200 });
                         if (word.example.includes('(')) {
@@ -234,45 +216,54 @@
                         }
                     }
 
-                    // 替換原本的 for (let item of items) 迴圈
                     for (let item of items) {
                         if (isCancelled || sequenceIdRef.current !== seqId) return;
                         if (item.delay) await new Promise(r => setTimeout(r, item.delay));
                         if (isCancelled || sequenceIdRef.current !== seqId) return;
 
-                        // Web Audio API 播放邏輯 (沒有 NotAllowedError 的困擾)
                         const playLocalFile = async (url) => {
                             try {
                                 if (isCancelled || sequenceIdRef.current !== seqId) return;
 
-                                // 1. 直接抓取本地音檔 (不會有跨域問題)
-                                const response = await fetch(url);
-                                if (!response.ok) {
-                                    console.warn(`找不到實體音檔，優雅略過: ${url}`);
-                                    return; // 檔案不存在就直接跳過，不會報錯卡死
+                                // 【防護升級】加入網路 fetch 3 次靜默重試 (防 4G/5G 斷訊)
+                                let response = null;
+                                let fetchSuccess = false;
+                                for (let attempt = 1; attempt <= 3; attempt++) {
+                                    try {
+                                        response = await fetch(url);
+                                        if (response.ok) {
+                                            fetchSuccess = true;
+                                            break;
+                                        }
+                                    } catch (e) {
+                                        if (attempt === 3) break;
+                                        await new Promise(r => setTimeout(r, 200)); // 網路抖動等待 0.2 秒再試
+                                    }
                                 }
 
-                                // 2. 轉為陣列緩衝區並解碼音訊
+                                if (!fetchSuccess) {
+                                    console.warn(`找不到實體音檔或網路錯誤，優雅略過: ${url}`);
+                                    return; // 檔案不存在就跳過，絕不報錯卡死
+                                }
+
                                 const arrayBuffer = await response.arrayBuffer();
-                                // 使用 callback 包裝 Promise，相容所有新舊版 Safari
                                 const audioBuffer = await new Promise((res, rej) => audioCtx.decodeAudioData(arrayBuffer, res, rej));
 
                                 if (isCancelled || sequenceIdRef.current !== seqId) return;
 
-                                // 3. 建立播放節點並連接到喇叭
                                 await new Promise((resolve) => {
                                     const source = audioCtx.createBufferSource();
                                     source.buffer = audioBuffer;
                                     source.connect(audioCtx.destination);
 
-                                    currentAudioSourceRef.current = source; // 記錄當前節點以便隨時可中斷
+                                    currentAudioSourceRef.current = source;
 
                                     source.onended = () => {
                                         currentAudioSourceRef.current = null;
                                         resolve();
                                     };
 
-                                    source.start(0); // 瞬間播放，零延遲
+                                    source.start(0);
                                 });
 
                             } catch (error) {
@@ -280,51 +271,43 @@
                             }
                         };
 
-                        // 執行播放
                         await playLocalFile(item.url);
                     }
 
                     if (isCancelled || sequenceIdRef.current !== seqId) return;
 
-                    // 單字整組播完後，暫停 1.5 秒再進入下一個，保護耳朵也保護 API
                     await new Promise(r => setTimeout(r, 1500));
                     if (isCancelled || sequenceIdRef.current !== seqId) return;
 
-                    // 自動切換到下一首或處理清單結尾
                     const len = currentVocabList.length;
                     if (listeningIndex + 1 >= len) {
-                        // 播到最後一首了
                         if (!isListeningLoopRef.current) {
-                            setIsPlaying(false); // 沒開循環，直接停止
-                            setIsStopped(true);  // 新增：標記為徹底停止
+                            setIsPlaying(false);
+                            setIsStopped(true);
                         } else {
-                            // 有開循環
                             if (isListeningRandomRef.current) {
-                                setListeningPlaylist(generatePlaylist(len, true)); // 重新洗牌
+                                setListeningPlaylist(generatePlaylist(len, true));
                             }
-                            setListeningIndex(0); // 從清單頭開始
+                            setListeningIndex(0);
                         }
                     } else {
-                        setListeningIndex(listeningIndex + 1); // 正常前往下一首
+                        setListeningIndex(listeningIndex + 1);
                     }
                 };
 
                 runSequence();
 
-                // 清除函數：當使用者按暫停或切換單字時觸發
                 return () => {
                     isCancelled = true;
                     stopCurrentAudio();
                 };
             }, [listeningIndex, isPlaying, currentTab, currentVocabList, isListeningRandom]);
 
-            // 安全的跳躍邏輯 (處理上十個、下十個，避免陣列索引變負數)
             const handleListeningJump = (step) => {
                 setListeningIndex(prev => {
                     const len = currentVocabList.length;
                     if (len === 0) return 0;
                     let next = prev + step;
-                    // 確保手動跳躍超出範圍時，用餘數繞轉回來
                     if (next < 0) next = (next % len + len) % len;
                     if (next >= len) next = next % len;
                     return next;
@@ -333,9 +316,8 @@
 
             const [isSpeaking, setIsSpeaking] = useState(false);
             const isSpeakingRef = React.useRef(false);
-            const speakSequenceIdRef = React.useRef(0); // 新增：解決連續點擊的聲音重疊問題
+            const speakSequenceIdRef = React.useRef(0);
 
-            // 【修正 1】：統一且唯一的中斷播放函數
             const stopCurrentAudio = () => {
                 isSpeakingRef.current = false;
                 setIsSpeaking(false);
@@ -354,9 +336,7 @@
                 stopCurrentAudio();
             };
 
-            // 👇 注意這裡要加上 async
             const handlePlayPauseClick = async () => {
-                // 👇 【新增】：確保 Windows/Android 瀏覽器的音效引擎被喚醒
                 if (audioCtx.state === 'suspended') {
                     await audioCtx.resume();
                 }
@@ -375,9 +355,7 @@
                 }
             };
 
-            // 【修正 2】：學習模式播放引擎 (加入 ID 防護機制)
             const speak = async (targetWord, isFull = false) => {
-                // 👇 【新增】：確保 Windows/Android 瀏覽器的音效引擎被喚醒
                 if (audioCtx.state === 'suspended') {
                     await audioCtx.resume();
                 }
@@ -388,7 +366,7 @@
 
                 setIsSpeaking(true);
                 isSpeakingRef.current = true;
-                const currentSeq = ++speakSequenceIdRef.current; // 產生這回合專屬的 ID
+                const currentSeq = ++speakSequenceIdRef.current;
 
                 const playQueue = [];
                 playQueue.push(`./audio/${targetWord.id}_ja.mp3`);
@@ -398,17 +376,30 @@
                 }
 
                 for (const url of playQueue) {
-                    // 檢查：如果使用者在這期間點了別的單字，目前 ID 會改變，立刻跳出迴圈
                     if (speakSequenceIdRef.current !== currentSeq) break;
 
                     try {
-                        const response = await fetch(url);
-                        if (!response.ok) continue;
+                        // 【防護升級】學習模式也加入 3 次網路靜默重試
+                        let response = null;
+                        let fetchSuccess = false;
+                        for (let attempt = 1; attempt <= 3; attempt++) {
+                            try {
+                                response = await fetch(url);
+                                if (response.ok) {
+                                    fetchSuccess = true;
+                                    break;
+                                }
+                            } catch (e) {
+                                if (attempt === 3) break;
+                                await new Promise(r => setTimeout(r, 200));
+                            }
+                        }
+
+                        if (!fetchSuccess) continue;
 
                         const arrayBuffer = await response.arrayBuffer();
                         const audioBuffer = await new Promise((res, rej) => audioCtx.decodeAudioData(arrayBuffer, res, rej));
 
-                        // 檢查：解碼需要時間，解碼完畢後再檢查一次是否被中斷
                         if (speakSequenceIdRef.current !== currentSeq) break;
 
                         await new Promise(resolve => {
@@ -425,7 +416,6 @@
                     }
                 }
 
-                // 只有當這回合完美播完，且沒有被新的點擊覆蓋時，才重置狀態
                 if (speakSequenceIdRef.current === currentSeq) {
                     setIsSpeaking(false);
                     isSpeakingRef.current = false;
@@ -446,7 +436,6 @@
                 let exportText = "// 請將此內容覆蓋對應的 vocab_NX.js\nwindow.VOCAB_DB = window.VOCAB_DB || {};\n";
                 selectedLevels.forEach(level => {
                     let updatedList = window.VOCAB_DB[level].map(v => {
-                        // 修正：使用舊式寫法避開 SyntaxError
                         const stat = stats[v.id] || { correct: 0, wrong: 0 };
                         return {
                             ...v,
@@ -530,16 +519,13 @@
 
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-            // 確保你的狀態定義是這樣 (直接設為 true 如果不是 iOS)
             const [isUnlocked, setIsUnlocked] = useState(!isIOS);
 
-            // 【修正 3】：解鎖函數 (加入物理開光機制確保 iOS 徹底放行)
             const handleGlobalUnlock = async () => {
                 if (audioCtx.state === 'suspended') {
                     await audioCtx.resume();
                 }
 
-                // 產生 1 毫秒的無聲 Buffer 進行物理播放，強制 iOS 解鎖 Web Audio API
                 const buffer = audioCtx.createBuffer(1, 1, 22050);
                 const source = audioCtx.createBufferSource();
                 source.buffer = buffer;
@@ -551,7 +537,6 @@
 
             return (
                 <React.Fragment>
-                    {/* 只有在 iOS 且尚未解鎖時，才顯示啟動按鈕 */}
                     {isIOS && !isUnlocked && (
                         <div style={{
                             position: 'fixed',
@@ -574,11 +559,11 @@
                         </div>
                     )}
 
-                    {/* 原本的主程式內容，在 Windows 會直接顯示，在 iOS 會在點擊後顯示 */}
                     <div className="max-w-xl mx-auto min-h-screen flex flex-col bg-slate-50">
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學</h1>
+                                {/* 【辨識標籤】：如果你沒看到 v3.0，代表快取沒清掉！ */}
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v3.0</span></h1>
                                 <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
                                     <i className="fas fa-download mr-1"></i>匯出紀錄
                                 </button>
@@ -606,7 +591,6 @@
                             </div>
                         </div>
 
-                        {/* 右下角浮動篩選按鈕 (FAB) */}
                         <button
                             onClick={() => setShowFilterModal(true)}
                             className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 text-white rounded-full shadow-2xl flex items-center justify-center text-2xl hover:scale-105 active:scale-95 transition-all z-40 border-2 border-white"
@@ -619,7 +603,6 @@
                             )}
                         </button>
 
-                        {/* 分類篩選器彈窗 (Modal) */}
                         {showFilterModal && (
                             <div className="fixed inset-0 bg-slate-900/60 z-50 flex justify-center items-center p-4 backdrop-blur-sm">
                                 <div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl relative">
@@ -678,7 +661,6 @@
                                             <span>
                                                 {(() => {
                                                     const total = currentVocabList.length;
-                                                    // 動態計算：比對「當前的單字庫」與「歷史瀏覽紀錄」，算出當前列表有多少單字被看過
                                                     const viewedCount = currentVocabList.filter(word => viewedIds.has(word.id)).length;
                                                     const percentage = total > 0 ? Math.round((viewedCount / total) * 100) : 0;
                                                     return `${percentage}% (${viewedCount}/${total})`;
@@ -690,7 +672,6 @@
                                         </div>
 
                                         <div className="bg-white rounded-2xl shadow-sm p-6 text-center relative mb-4">
-                                            {/* 原本單字的發音按鈕 (維持在右上角) */}
                                             <button
                                                 onClick={() => speak(word, false)}
                                                 className={`absolute top-4 right-4 text-xl ...`}
@@ -698,7 +679,6 @@
                                                 <i className="fas fa-volume-up"></i>
                                             </button>
 
-                                            {/* 左上角：隨機/循序切換按鈕 (與右上角喇叭對稱) */}
                                             <button
                                                 onClick={() => setIsRandomStudy(!isRandomStudy)}
                                                 className={`absolute top-4 left-4 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm border transition-all active:scale-95 ${isRandomStudy ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'}`}
@@ -706,9 +686,7 @@
                                                 <i className="fas fa-random mr-1"></i>{isRandomStudy ? '隨機' : '循序'}
                                             </button>
 
-                                            {/* 左右高型懸浮切換按鈕與核心單字顯示區 */}
                                             <div className="flex items-stretch justify-between mt-8 mb-2 gap-3 px-1">
-                                                {/* 上一頁按鈕 (左側) */}
                                                 <button
                                                     onClick={() => setStudyIndex((studyIndex - 1 + currentVocabList.length) % currentVocabList.length)}
                                                     className="w-10 rounded-xl bg-slate-50 border border-slate-100 shadow-sm text-slate-400 hover:text-slate-600 hover:bg-slate-200 active:scale-95 transition-all flex items-center justify-center"
@@ -716,7 +694,6 @@
                                                     <i className="fas fa-chevron-left"></i>
                                                 </button>
 
-                                                {/* 單字核心區 (置中) */}
                                                 <div className="flex-1 flex flex-col items-center justify-center">
                                                     <div className={`text-5xl font-bold py-2 ${hideKanji ? 'blur-md bg-slate-200 text-transparent select-none' : 'text-slate-800'}`} onClick={() => setHideKanji(false)}>
                                                         {word.kanji}
@@ -729,7 +706,6 @@
                                                     </div>
                                                 </div>
 
-                                                {/* 下一頁按鈕 (右側) */}
                                                 <button
                                                     onClick={() => setStudyIndex(isRandomStudy ? Math.floor(Math.random() * currentVocabList.length) : (studyIndex + 1) % currentVocabList.length)}
                                                     className="w-10 rounded-xl bg-slate-50 border border-slate-100 shadow-sm text-slate-400 hover:text-slate-600 hover:bg-slate-200 active:scale-95 transition-all flex items-center justify-center"
@@ -741,10 +717,8 @@
                                             <hr className="my-3 opacity-50" />
                                             <div className={`text-xl py-2 ${hideMeaning ? 'blur-md bg-slate-200 text-transparent select-none' : 'text-blue-600 font-bold'}`} onClick={() => setHideMeaning(false)}>{word.meaning}</div>
 
-                                            {/* 例句與筆記區塊 */}
                                             { (word.example || word.notes) && (
                                                 <div className="mt-4 text-left bg-slate-50 p-3 rounded-lg text-sm border border-slate-100">
-                                                    {/* 例句部分 */}
                                                     {word.example && (
                                                         <div className="mb-2">
                                                             <div className="flex items-center mb-1">
@@ -764,8 +738,6 @@
                                                             )}
                                                         </div>
                                                     )}
-
-                                                    {/* 筆記部分 (新增這段) */}
                                                     {word.notes && (
                                                         <div className="border-t border-slate-200 pt-2 mt-1">
                                                             <span className="font-bold text-amber-600 mr-2">註:</span>
@@ -786,13 +758,11 @@
                             })()}
 
                             {currentTab === 'listening' && currentVocabList.length > 0 && listeningPlaylist.length > 0 && (() => {
-                                // 透過播放清單抓出實際單字
                                 const word = currentVocabList[listeningPlaylist[listeningIndex]];
                                 if (!word) return null;
 
                                 return (
                                     <div className="flex flex-col flex-1 h-full">
-                                        {/* 上半部：單字顯示面板 */}
                                         <div className="bg-white rounded-2xl shadow-sm p-6 text-center mb-4 flex-1 flex flex-col justify-center">
                                             <div className="text-5xl font-bold py-2 text-slate-800">{word.kanji}</div>
                                             <div className="flex justify-center items-center gap-2 py-2">
@@ -802,7 +772,6 @@
                                             <hr className="my-3 opacity-50" />
                                             <div className="text-xl py-2 text-blue-600 font-bold">{word.meaning}</div>
 
-                                            {/* 例句與筆記 */}
                                             { (word.example || word.notes) && (
                                                 <div className="mt-4 text-left bg-slate-50 p-3 rounded-lg text-sm border border-slate-100">
                                                     {word.example && (
@@ -828,7 +797,6 @@
                                             )}
                                         </div>
 
-                                        {/* 下半部：MP3 控制面板 */}
                                         <div className="mt-auto bg-slate-800 text-white rounded-3xl p-6 shadow-xl mb-2 flex flex-col gap-5">
                                             <div className="flex justify-between items-center text-xs font-bold px-1 mb-1">
                                                 <div className="flex gap-4">
