@@ -29,8 +29,9 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        // 【新增】：全域唯一的播放器，徹底解決 iOS Safari 的非同步授權問題
-        const globalAudioPlayer = new Audio();
+        // 【終極方案】：使用 Web Audio API，徹底規避 HTML5 Audio 的自動播放政策
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
 
         function App() {
             // 成績讀寫防護機制
@@ -186,15 +187,15 @@
                 }
             }, [currentVocabList]);
 
-            const currentAudioRef = React.useRef(null);
+            // 修正變數名稱，並移除已經用不到的 audioCache
+            const currentAudioSourceRef = React.useRef(null);
             const sequenceIdRef = React.useRef(0);
-            const audioCache = React.useRef({});
 
             // 聽力模式播放引擎
             useEffect(() => {
                 // 如果不在聽力模式、按下暫停、或清單尚未建立，立刻停止
                 if (currentTab !== 'listening' || !isPlaying || currentVocabList.length === 0 || listeningPlaylist.length === 0) {
-                    if (currentAudioRef.current) currentAudioRef.current.pause();
+                    stopCurrentAudio();
                     sequenceIdRef.current++;
                     return;
                 }
@@ -239,70 +240,48 @@
                         if (item.delay) await new Promise(r => setTimeout(r, item.delay));
                         if (isCancelled || sequenceIdRef.current !== seqId) return;
 
-                        // 帶有 Retry 機制與事件清理的全域播放函數
-                        const playWithRetry = async (url, maxRetries = 10) => {
-                            let lastError = null;
-
-                            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                        // Web Audio API 播放邏輯 (沒有 NotAllowedError 的困擾)
+                        const playLocalFile = async (url) => {
+                            try {
                                 if (isCancelled || sequenceIdRef.current !== seqId) return;
 
-                                try {
-                                    await new Promise((resolve, reject) => {
-                                        const audio = globalAudioPlayer; // 🚨 唯一關鍵：使用全域播放器
-
-                                        // 每次播放前，徹底清除上一次的事件殘留，避免記憶體洩漏與重複觸發
-                                        audio.onended = null;
-                                        audio.onerror = null;
-
-                                        audio.src = url;
-                                        audio.load();
-
-                                        audio.onended = () => {
-                                            audio.onended = null;
-                                            audio.onerror = null;
-                                            resolve();
-                                        };
-
-                                        audio.onerror = () => {
-                                            const errorDetail = audio.error ? `Code: ${audio.error.code}, Msg: ${audio.error.message}` : "Unknown File Error";
-                                            audio.onended = null;
-                                            audio.onerror = null;
-                                            reject(new Error(`檔案載入失敗 (${errorDetail})`));
-                                        };
-
-                                        const playPromise = audio.play();
-                                        if (playPromise !== undefined) {
-                                            playPromise.catch((err) => {
-                                                audio.onended = null;
-                                                audio.onerror = null;
-                                                reject(err);
-                                            });
-                                        }
-                                    });
-
-                                    return; // 播放成功，跳出 Retry 迴圈
-
-                                } catch (error) {
-                                    lastError = error;
-                                    console.warn(`[播放失敗] 嘗試 ${attempt}/${maxRetries} 次: ${url}`, error);
-
-                                    if (attempt === maxRetries) {
-                                        const errorMsg = `語音播放崩潰 (已重試 10 次)\n\n檔案: ${url}\n錯誤原因: ${lastError.name} - ${lastError.message}\n\n這可能是檔案遺失或 iOS 資源被卡死，系統已自動暫停播放。`;
-                                        console.error(errorMsg);
-                                        alert(errorMsg);
-
-                                        setIsPlaying(false);
-                                        setIsStopped(true);
-                                        return;
-                                    }
-
-                                    await new Promise(r => setTimeout(r, 200));
+                                // 1. 直接抓取本地音檔 (不會有跨域問題)
+                                const response = await fetch(url);
+                                if (!response.ok) {
+                                    console.warn(`找不到實體音檔，優雅略過: ${url}`);
+                                    return; // 檔案不存在就直接跳過，不會報錯卡死
                                 }
+
+                                // 2. 轉為陣列緩衝區並解碼音訊
+                                const arrayBuffer = await response.arrayBuffer();
+                                // 使用 callback 包裝 Promise，相容所有新舊版 Safari
+                                const audioBuffer = await new Promise((res, rej) => audioCtx.decodeAudioData(arrayBuffer, res, rej));
+
+                                if (isCancelled || sequenceIdRef.current !== seqId) return;
+
+                                // 3. 建立播放節點並連接到喇叭
+                                await new Promise((resolve) => {
+                                    const source = audioCtx.createBufferSource();
+                                    source.buffer = audioBuffer;
+                                    source.connect(audioCtx.destination);
+
+                                    currentAudioSourceRef.current = source; // 記錄當前節點以便隨時可中斷
+
+                                    source.onended = () => {
+                                        currentAudioSourceRef.current = null;
+                                        resolve();
+                                    };
+
+                                    source.start(0); // 瞬間播放，零延遲
+                                });
+
+                            } catch (error) {
+                                console.error(`讀取或解碼發生錯誤: ${url}`, error);
                             }
                         };
 
-                        // 執行播放，設定最高重試 10 次
-                        await playWithRetry(item.url, 10);
+                        // 執行播放
+                        await playLocalFile(item.url);
                     }
 
                     if (isCancelled || sequenceIdRef.current !== seqId) return;
@@ -335,7 +314,7 @@
                 // 清除函數：當使用者按暫停或切換單字時觸發
                 return () => {
                     isCancelled = true;
-                    if (currentAudioRef.current) currentAudioRef.current.pause();
+                    stopCurrentAudio();
                 };
             }, [listeningIndex, isPlaying, currentTab, currentVocabList, isListeningRandom]);
 
@@ -353,39 +332,63 @@
             };
 
             const [isSpeaking, setIsSpeaking] = useState(false);
+            const isSpeakingRef = React.useRef(false);
+            const speakSequenceIdRef = React.useRef(0); // 新增：解決連續點擊的聲音重疊問題
 
-            // 聽力模式按鈕控制邏輯
+            // 【修正 1】：統一且唯一的中斷播放函數
+            const stopCurrentAudio = () => {
+                isSpeakingRef.current = false;
+                setIsSpeaking(false);
+                if (currentAudioSourceRef.current) {
+                    try {
+                        currentAudioSourceRef.current.stop();
+                        currentAudioSourceRef.current.disconnect();
+                    } catch(e) {}
+                    currentAudioSourceRef.current = null;
+                }
+            };
+
             const handleStopClick = () => {
                 setIsPlaying(false);
                 setIsStopped(true);
-                globalAudioPlayer.pause(); // 停止全域播放器
-                globalAudioPlayer.src = "";
+                stopCurrentAudio();
             };
 
-            const handlePlayPauseClick = () => {
+            // 👇 注意這裡要加上 async
+            const handlePlayPauseClick = async () => {
+                // 👇 【新增】：確保 Windows/Android 瀏覽器的音效引擎被喚醒
+                if (audioCtx.state === 'suspended') {
+                    await audioCtx.resume();
+                }
+
                 if (!isPlaying) {
-                    // 如果從「徹底停止」狀態重新啟動，重新規劃清單
                     if (isStopped) {
                         const len = currentVocabList.length;
-                        // 抓出當下螢幕顯示單字的絕對 Index
                         const currentAbsoluteIdx = listeningPlaylist.length > 0 ? listeningPlaylist[listeningIndex] : 0;
-
-                        // 隨機模式：產生全新亂數；循序模式：產生以 currentAbsoluteIdx 為首的循序清單
                         setListeningPlaylist(generatePlaylist(len, isListeningRandom, isListeningRandom ? 0 : currentAbsoluteIdx));
-                        setListeningIndex(0); // 清單計數歸零，從第 1 首開始
+                        setListeningIndex(0);
                         setIsStopped(false);
                     }
                     setIsPlaying(true);
                 } else {
-                    // 單純暫停，清單進度保留
                     setIsPlaying(false);
                 }
             };
 
-            // 學習模式播放引擎 (共用全域播放器)
-            const speak = (targetWord, isFull = false) => {
-                if (isSpeaking) return;
+            // 【修正 2】：學習模式播放引擎 (加入 ID 防護機制)
+            const speak = async (targetWord, isFull = false) => {
+                // 👇 【新增】：確保 Windows/Android 瀏覽器的音效引擎被喚醒
+                if (audioCtx.state === 'suspended') {
+                    await audioCtx.resume();
+                }
+
+                if (isSpeakingRef.current) {
+                    stopCurrentAudio();
+                }
+
                 setIsSpeaking(true);
+                isSpeakingRef.current = true;
+                const currentSeq = ++speakSequenceIdRef.current; // 產生這回合專屬的 ID
 
                 const playQueue = [];
                 playQueue.push(`./audio/${targetWord.id}_ja.mp3`);
@@ -394,44 +397,39 @@
                     playQueue.push(`./audio/${targetWord.id}_ex_ja.mp3`);
                 }
 
-                const playNext = (index) => {
-                    if (index >= playQueue.length) {
-                        setIsSpeaking(false);
-                        return;
-                    }
+                for (const url of playQueue) {
+                    // 檢查：如果使用者在這期間點了別的單字，目前 ID 會改變，立刻跳出迴圈
+                    if (speakSequenceIdRef.current !== currentSeq) break;
 
-                    const audio = globalAudioPlayer;
-                    audio.onended = null;
-                    audio.onerror = null;
+                    try {
+                        const response = await fetch(url);
+                        if (!response.ok) continue;
 
-                    audio.src = playQueue[index];
-                    audio.load();
+                        const arrayBuffer = await response.arrayBuffer();
+                        const audioBuffer = await new Promise((res, rej) => audioCtx.decodeAudioData(arrayBuffer, res, rej));
 
-                    audio.onended = () => {
-                        audio.onended = null;
-                        audio.onerror = null;
-                        playNext(index + 1);
-                    };
+                        // 檢查：解碼需要時間，解碼完畢後再檢查一次是否被中斷
+                        if (speakSequenceIdRef.current !== currentSeq) break;
 
-                    audio.onerror = () => {
-                        audio.onended = null;
-                        audio.onerror = null;
-                        console.warn(`找不到實體音檔，略過: ${playQueue[index]}`);
-                        playNext(index + 1);
-                    };
+                        await new Promise(resolve => {
+                            const source = audioCtx.createBufferSource();
+                            source.buffer = audioBuffer;
+                            source.connect(audioCtx.destination);
+                            currentAudioSourceRef.current = source;
 
-                    const playPromise = audio.play();
-                    if (playPromise !== undefined) {
-                        playPromise.catch(err => {
-                            audio.onended = null;
-                            audio.onerror = null;
-                            console.error("播放被系統阻擋:", err);
-                            setIsSpeaking(false);
+                            source.onended = resolve;
+                            source.start(0);
                         });
+                    } catch (e) {
+                        console.warn(`語音播放失敗略過: ${url}`, e);
                     }
-                };
+                }
 
-                playNext(0);
+                // 只有當這回合完美播完，且沒有被新的點擊覆蓋時，才重置狀態
+                if (speakSequenceIdRef.current === currentSeq) {
+                    setIsSpeaking(false);
+                    isSpeakingRef.current = false;
+                }
             };
 
             const updateStats = (id, isCorrect) => {
@@ -535,23 +533,20 @@
             // 確保你的狀態定義是這樣 (直接設為 true 如果不是 iOS)
             const [isUnlocked, setIsUnlocked] = useState(!isIOS);
 
-            // 解鎖函數：使用靜音檔對全域播放器進行授權
-            const handleGlobalUnlock = () => {
-                // 這是一段合法的 0.1 秒靜音 MP3 Base64 編碼
-                globalAudioPlayer.src = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU5LjI3LjEwMAAAAAAAAAAAAAAA//MUXxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
-                globalAudioPlayer.load();
-
-                const playPromise = globalAudioPlayer.play();
-                if (playPromise !== undefined) {
-                    playPromise.then(() => {
-                        setIsUnlocked(true);
-                    }).catch(e => {
-                        console.error("解鎖發生例外，但手勢已註冊:", e);
-                        setIsUnlocked(true);
-                    });
-                } else {
-                    setIsUnlocked(true);
+            // 【修正 3】：解鎖函數 (加入物理開光機制確保 iOS 徹底放行)
+            const handleGlobalUnlock = async () => {
+                if (audioCtx.state === 'suspended') {
+                    await audioCtx.resume();
                 }
+
+                // 產生 1 毫秒的無聲 Buffer 進行物理播放，強制 iOS 解鎖 Web Audio API
+                const buffer = audioCtx.createBuffer(1, 1, 22050);
+                const source = audioCtx.createBufferSource();
+                source.buffer = buffer;
+                source.connect(audioCtx.destination);
+                source.start(0);
+
+                setIsUnlocked(true);
             };
 
             return (
