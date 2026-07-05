@@ -214,18 +214,19 @@
                         }
                     }
 
+                    // --- 聽力模式播放引擎 (本地資源版) ---
                     // 定義播放佇列：單字(日) -> 單字(日) -> 中文(中)
                     const items = [
-                        { text: word.kana, lang: 'ja', delay: 500 },
-                        { text: word.kana, lang: 'ja', delay: 800 },
-                        { text: word.meaning, lang: 'zh-TW', delay: 1000 }
+                        { url: `./audio/${word.id}_ja.mp3`, delay: 500 },
+                        { url: `./audio/${word.id}_ja.mp3`, delay: 800 },
+                        { url: `./audio/${word.id}_zh.mp3`, delay: 1000 }
                     ];
 
                     // 如果有例句，加入 日文例句 -> 中文例句
-                    if (exampleJa) {
-                        items.push({ text: exampleJa, lang: 'ja', delay: 1200 });
-                        if (exampleZh) {
-                            items.push({ text: exampleZh, lang: 'zh-TW', delay: 800 });
+                    if (word.example) {
+                        items.push({ url: `./audio/${word.id}_ex_ja.mp3`, delay: 1200 });
+                        if (word.example.includes('(')) {
+                            items.push({ url: `./audio/${word.id}_ex_zh.mp3`, delay: 800 });
                         }
                     }
 
@@ -235,38 +236,19 @@
                         if (isCancelled || sequenceIdRef.current !== seqId) return;
 
                         await new Promise((resolve) => {
-                            const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${item.lang}&client=tw-ob&q=${encodeURIComponent(item.text)}`;
-
-                            // 【省流量魔法】檢查快取是否有這段音檔，沒有才建立
-                            if (!audioCache.current[url]) {
-                                audioCache.current[url] = new Audio(url);
-                            }
-                            const audio = audioCache.current[url];
-
-                            // 🚨 超時防護：如果 5 秒都沒播完或沒反應，強制跳過並刪除壞快取
-                            const timeout = setTimeout(() => {
-                                delete audioCache.current[url]; // 剔除毒化快取
-                                audio.pause();
-                                resolve();
-                            }, 5000);
-
-                            audio.currentTime = 0; // 重置播放進度
+                            const audio = new Audio(item.url);
                             currentAudioRef.current = audio;
 
-                            audio.onended = () => {
-                                clearTimeout(timeout);
+                            audio.onended = () => resolve();
+
+                            // 容錯機制：如果某個單字的中文或例句音檔遺失，不會卡死，直接 resolve 進入下一個
+                            audio.onerror = () => {
+                                console.warn(`聽力模式略過遺失音檔: ${item.url}`);
                                 resolve();
                             };
 
-                            // 🚨 核心修復：如果網路斷線或 API 阻擋導致載入錯誤
-                            audio.onerror = () => {
-                                delete audioCache.current[url]; // 剔除毒化快取，下次就會重新下載
-                                clearTimeout(timeout);
-                                resolve(); // 繼續往下播，不要卡死整個 APP
-                            };
-
-                            audio.play().catch(() => {
-                                clearTimeout(timeout);
+                            audio.play().catch((err) => {
+                                console.error("聽力模式播放異常:", err);
                                 resolve();
                             });
                         });
@@ -348,33 +330,47 @@
                 }
             };
 
-            // 定義一個簡單的播放器
+            // --- 學習模式播放引擎 (本地資源版) ---
             const speak = (targetWord, isFull = false) => {
                 if (isSpeaking) return;
                 setIsSpeaking(true);
 
-                const textToSpeak = isFull ?
-                    `${targetWord.kana}。 ${targetWord.example ? targetWord.example.split(' (')[0].replace(/\[.*?\]/g, '').trim() : ""}` :
-                    targetWord.kana;
+                // 根據命名規範，組裝需要播放的檔案陣列
+                const playQueue = [];
+                playQueue.push(`./audio/${targetWord.id}_ja.mp3`);
 
-                const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ja&client=tw-ob&q=${encodeURIComponent(textToSpeak)}`;
+                if (isFull && targetWord.example) {
+                    playQueue.push(`./audio/${targetWord.id}_ex_ja.mp3`);
+                    // 若學習模式也想聽中文例句，可解除下方註解
+                    // if (targetWord.example.includes('(')) {
+                    //    playQueue.push(`./audio/${targetWord.id}_ex_zh.mp3`);
+                    // }
+                }
 
-                // 建立一個真正的 HTMLAudioElement
-                const audio = new Audio(url);
+                // 遞迴循序播放佇列中的音檔
+                const playNext = (index) => {
+                    if (index >= playQueue.length) {
+                        setIsSpeaking(false);
+                        return;
+                    }
+                    const audio = new Audio(playQueue[index]);
 
-                // 強制觸發載入
-                audio.load();
+                    audio.onended = () => playNext(index + 1);
 
-                // 給 Safari 0.1 秒的準備時間再播放
-                setTimeout(() => {
+                    // 容錯機制：如果本地少抓了某個音檔，直接跳過不報錯，繼續播下一個
+                    audio.onerror = () => {
+                        console.warn(`找不到實體音檔，略過: ${playQueue[index]}`);
+                        playNext(index + 1);
+                    };
+
+                    // iOS 安全限制防護
                     audio.play().catch(err => {
-                        console.error("最後的播放錯誤:", err);
+                        console.error("播放被系統阻擋:", err);
                         setIsSpeaking(false);
                     });
-                }, 100);
+                };
 
-                audio.onended = () => setIsSpeaking(false);
-                audio.onerror = () => setIsSpeaking(false);
+                playNext(0);
             };
 
             const updateStats = (id, isCorrect) => {
