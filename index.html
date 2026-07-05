@@ -230,28 +230,60 @@
                         }
                     }
 
+                    // 替換原本的 for (let item of items) 迴圈
                     for (let item of items) {
                         if (isCancelled || sequenceIdRef.current !== seqId) return;
                         if (item.delay) await new Promise(r => setTimeout(r, item.delay));
                         if (isCancelled || sequenceIdRef.current !== seqId) return;
 
-                        await new Promise((resolve) => {
-                            const audio = new Audio(item.url);
-                            currentAudioRef.current = audio;
+                        // 【新增】帶有 Retry 機制的非同步播放函數
+                        const playWithRetry = async (url, maxRetries = 10) => {
+                            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                                // 確保在 Retry 過程中如果使用者按下暫停或切換，能立刻中斷
+                                if (isCancelled || sequenceIdRef.current !== seqId) return;
 
-                            audio.onended = () => resolve();
+                                try {
+                                    await new Promise((resolve, reject) => {
+                                        const audio = new Audio(url);
+                                        currentAudioRef.current = audio;
 
-                            // 容錯機制：如果某個單字的中文或例句音檔遺失，不會卡死，直接 resolve 進入下一個
-                            audio.onerror = () => {
-                                console.warn(`聽力模式略過遺失音檔: ${item.url}`);
-                                resolve();
-                            };
+                                        // 核心細節：強制瀏覽器先辨識並預載資源，這對 iOS 非常重要
+                                        audio.load();
 
-                            audio.play().catch((err) => {
-                                console.error("聽力模式播放異常:", err);
-                                resolve();
-                            });
-                        });
+                                        // 正常播完
+                                        audio.onended = () => resolve();
+
+                                        // 檔案載入失敗 (例如 404 找不到檔案)
+                                        audio.onerror = () => {
+                                            reject(new Error("Audio loading error"));
+                                        };
+
+                                        // 播放被系統阻擋或資源競爭導致中斷
+                                        audio.play().catch((err) => {
+                                            reject(err);
+                                        });
+                                    });
+
+                                    // 如果順利 resolve() 執行到這裡，代表播完了，直接 return 跳出 Retry 迴圈
+                                    return;
+
+                                } catch (error) {
+                                    console.warn(`[播放失敗] 嘗試 ${attempt}/${maxRetries} 次: ${url}`);
+
+                                    if (attempt === maxRetries) {
+                                        console.error(`已達最大重試上限，無奈跳過此語音: ${url}`);
+                                        return; // 真的不行就優雅地跳過，繼續播下一個，不卡死 APP
+                                    }
+
+                                    // 【核心關鍵】：失敗後必須等待一小段時間 (200ms) 再重試。
+                                    // 否則電腦運算太快，10 次重試會在 1 毫秒內瞬間全部失敗，失去 Retry 的意義。
+                                    await new Promise(r => setTimeout(r, 200));
+                                }
+                            }
+                        };
+
+                        // 執行播放，設定最高重試 10 次
+                        await playWithRetry(item.url, 10);
                     }
 
                     if (isCancelled || sequenceIdRef.current !== seqId) return;
