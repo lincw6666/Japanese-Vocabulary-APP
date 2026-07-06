@@ -578,12 +578,12 @@
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
             const [isUnlocked, setIsUnlocked] = useState(!isIOS);
 
-            const handleGlobalUnlock = async () => {
-                if (audioCtx.state === 'suspended') await audioCtx.resume();
-                const buffer = audioCtx.createBuffer(1, 1, 22050);
-                const source = audioCtx.createBufferSource();
+            const handleGlobalUnlock = () => {
+                const ctx = getAudioCtx(); // 同步喚醒，不使用 await
+                const buffer = ctx.createBuffer(1, 1, 22050);
+                const source = ctx.createBufferSource();
                 source.buffer = buffer;
-                source.connect(audioCtx.destination);
+                source.connect(ctx.destination);
                 source.start(0);
                 setIsUnlocked(true);
             };
