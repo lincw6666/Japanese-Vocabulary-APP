@@ -86,16 +86,7 @@
             }, [selectedLevels]);
 
             const [studyIndex, setStudyIndex] = useState(0);
-
-            useEffect(() => {
-                if (currentVocabList.length > 0) {
-                    setViewedIds(prev => {
-                        const next = new Set(prev);
-                        next.add(currentVocabList[studyIndex].id);
-                        return next;
-                    });
-                }
-            }, [studyIndex, currentVocabList]);
+            // (原本用來記錄 viewedIds 的 useEffect 已被移至下方，以確保讀取到正確的錯題本清單)
 
             const loadViewedIds = () => {
                 try {
@@ -147,9 +138,42 @@
                 return list;
             }, [selectedLevels, selectedCategories]);
 
+            // 👉 新增：錯題本模式狀態與專屬清單
+            const [isReviewMistakesMode, setIsReviewMistakesMode] = useState(false);
+
+            const studyVocabList = useMemo(() => {
+                if (!isReviewMistakesMode) return currentVocabList;
+
+                return [...currentVocabList].filter(word => {
+                    const s = stats[word.id];
+                    if (!s || !s.history) return false;
+                    return s.history.filter(res => !res).length > 0; // 近 10 次內有錯過才顯示
+                }).sort((a, b) => {
+                    const countA = stats[a.id].history ? stats[a.id].history.filter(res => !res).length : 0;
+                    const countB = stats[b.id].history ? stats[b.id].history.filter(res => !res).length : 0;
+                    if (countB !== countA) return countB - countA; // 首要條件：近 10 次錯越多次排越前面
+
+                    // 次要條件：若近 10 次錯一樣多，則比較有史以來總錯誤次數
+                    const totalA = stats[a.id].wrong || 0;
+                    const totalB = stats[b.id].wrong || 0;
+                    return totalB - totalA;
+                });
+            }, [currentVocabList, isReviewMistakesMode, stats]);
+
             useEffect(() => {
                 setStudyIndex(0);
-            }, [currentVocabList]);
+            }, [studyVocabList]);
+
+            // 👉 新增：正確記錄「學習模式」當下看過的單字
+            useEffect(() => {
+                if (currentTab === 'study' && studyVocabList.length > 0 && studyVocabList[studyIndex]) {
+                    setViewedIds(prev => {
+                        const next = new Set(prev);
+                        next.add(studyVocabList[studyIndex].id);
+                        return next;
+                    });
+                }
+            }, [studyIndex, studyVocabList, currentTab]);
 
             const [listeningIndex, setListeningIndex] = useState(0);
             const [isPlaying, setIsPlaying] = useState(false);
@@ -680,25 +704,44 @@
                         )}
 
                         <div className="p-4 flex-1 flex flex-col">
-                            {currentTab === 'study' && currentVocabList.length > 0 && (() => {
-                                const word = currentVocabList[studyIndex];
+                            {currentTab === 'study' && (() => {
+                                if (currentVocabList.length === 0) return null;
+
+                                if (isReviewMistakesMode && studyVocabList.length === 0) {
+                                    return (
+                                        <div className="flex flex-col flex-1 items-center justify-center text-center p-6 bg-white rounded-2xl shadow-sm border border-slate-100 mt-4">
+                                            <i className="fas fa-glass-cheers text-6xl text-amber-400 mb-6 drop-shadow-md animate-bounce"></i>
+                                            <h3 className="text-xl font-bold text-slate-800 mb-2">太棒了！無錯題！</h3>
+                                            <p className="text-slate-500 text-sm">目前範圍內，您近 10 次測驗都沒有答錯任何單字哦！</p>
+                                            <button
+                                                onClick={() => setIsReviewMistakesMode(false)}
+                                                className="mt-8 py-3 px-8 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all"
+                                            >
+                                                返回全部單字
+                                            </button>
+                                        </div>
+                                    );
+                                }
+
+                                const word = studyVocabList[studyIndex];
                                 if (!word) return null;
-                                const s = stats[word.id] || {correct:0, wrong:0};
+                                const s = stats[word.id] || {correct:0, wrong:0, history: []};
                                 const errRate = (s.correct+s.wrong)===0 ? 0 : Math.round(s.wrong/(s.correct+s.wrong)*100);
+                                const recentWrong = s.history ? s.history.filter(res => !res).length : 0;
 
                                 return (
                                     <div className="flex flex-col flex-1">
-                                        <div className="flex justify-between text-xs text-slate-500 mb-2">
+                                        <div className="flex justify-between items-center text-xs text-slate-500 mb-2">
                                             <span>
                                                 {(() => {
-                                                    const total = currentVocabList.length;
-                                                    const viewedCount = currentVocabList.filter(word => viewedIds.has(word.id)).length;
+                                                    const total = studyVocabList.length;
+                                                    const viewedCount = studyVocabList.filter(w => viewedIds.has(w.id)).length;
                                                     const percentage = total > 0 ? Math.round((viewedCount / total) * 100) : 0;
-                                                    return `${percentage}% (${viewedCount}/${total})`;
+                                                    return `${isReviewMistakesMode ? '錯題本' : '學習'}進度: ${percentage}% (${viewedCount}/${total})`;
                                                 })()}
                                             </span>
                                             <span>
-                                                錯題率: <b className="text-red-500">{errRate}%</b>
+                                                近10次錯: <b className="text-red-500">{recentWrong}</b> | 錯題率: <b className="text-red-500">{errRate}%</b>
                                             </span>
                                         </div>
 
@@ -710,16 +753,24 @@
                                                 <i className="fas fa-volume-up"></i>
                                             </button>
 
-                                            <button
-                                                onClick={() => setIsRandomStudy(!isRandomStudy)}
-                                                className={`absolute top-4 left-4 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm border transition-all active:scale-95 ${isRandomStudy ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'}`}
-                                            >
-                                                <i className="fas fa-random mr-1"></i>{isRandomStudy ? '隨機' : '循序'}
-                                            </button>
-
-                                            <div className="flex items-stretch justify-between mt-8 mb-2 gap-3 px-1">
+                                            <div className="absolute top-4 left-4 flex flex-col gap-2 items-start z-10">
                                                 <button
-                                                    onClick={() => setStudyIndex((studyIndex - 1 + currentVocabList.length) % currentVocabList.length)}
+                                                    onClick={() => setIsReviewMistakesMode(!isReviewMistakesMode)}
+                                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-full shadow-sm border transition-all active:scale-95 flex items-center ${isReviewMistakesMode ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'}`}
+                                                >
+                                                    <i className={`fas fa-book-dead mr-1 ${isReviewMistakesMode ? 'animate-pulse' : ''}`}></i>{isReviewMistakesMode ? '錯題本: 開' : '錯題本: 關'}
+                                                </button>
+                                                <button
+                                                    onClick={() => setIsRandomStudy(!isRandomStudy)}
+                                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-full shadow-sm border transition-all active:scale-95 flex items-center ${isRandomStudy ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'}`}
+                                                >
+                                                    <i className="fas fa-random mr-1"></i>{isRandomStudy ? '隨機' : '循序'}
+                                                </button>
+                                            </div>
+
+                                            <div className="flex items-stretch justify-between mt-16 mb-2 gap-3 px-1">
+                                                <button
+                                                    onClick={() => setStudyIndex((studyIndex - 1 + studyVocabList.length) % studyVocabList.length)}
                                                     className="w-10 rounded-xl bg-slate-50 border border-slate-100 shadow-sm text-slate-400 hover:text-slate-600 hover:bg-slate-200 active:scale-95 transition-all flex items-center justify-center"
                                                 >
                                                     <i className="fas fa-chevron-left"></i>
@@ -738,7 +789,7 @@
                                                 </div>
 
                                                 <button
-                                                    onClick={() => setStudyIndex(isRandomStudy ? Math.floor(Math.random() * currentVocabList.length) : (studyIndex + 1) % currentVocabList.length)}
+                                                    onClick={() => setStudyIndex(isRandomStudy ? Math.floor(Math.random() * studyVocabList.length) : (studyIndex + 1) % studyVocabList.length)}
                                                     className="w-10 rounded-xl bg-slate-50 border border-slate-100 shadow-sm text-slate-400 hover:text-slate-600 hover:bg-slate-200 active:scale-95 transition-all flex items-center justify-center"
                                                 >
                                                     <i className="fas fa-chevron-right"></i>
