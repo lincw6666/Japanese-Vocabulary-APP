@@ -31,11 +31,13 @@
 
         let globalAudioCtx = null;
         const getAudioCtx = () => {
-            if (!globalAudioCtx) {
+            // 👉 修正：偵測 'closed' 狀態，當背景閒置太久被 OS 砍掉時，重新建立音效引擎
+            if (!globalAudioCtx || globalAudioCtx.state === 'closed') {
                 const AudioContext = window.AudioContext || window.webkitAudioContext;
                 globalAudioCtx = new AudioContext();
             }
-            if (globalAudioCtx.state === 'suspended') {
+            // 👉 修正：相容 iOS Safari 的 'interrupted' 狀態
+            if (globalAudioCtx.state === 'suspended' || globalAudioCtx.state === 'interrupted') {
                 globalAudioCtx.resume();
             }
             return globalAudioCtx;
@@ -63,11 +65,26 @@
             }, [stats]);
 
             const availableLevels = window.VOCAB_DB ? Object.keys(window.VOCAB_DB).sort() : [];
-            const [selectedLevels, setSelectedLevels] = useState(availableLevels.length > 0 ? [availableLevels[availableLevels.length-1]] : []);
-            const [currentTab, setCurrentTab] = useState('study');
 
-            // --- 類別篩選器狀態 ---
-            const [selectedCategories, setSelectedCategories] = useState([]);
+            // 👉 新增：記憶上次勾選的級別與分頁
+            const [selectedLevels, setSelectedLevels] = useState(() => {
+                try {
+                    const saved = JSON.parse(localStorage.getItem('vocabLevels'));
+                    if (saved && saved.length > 0) return saved;
+                } catch(e) {}
+                return availableLevels.length > 0 ? [availableLevels[availableLevels.length-1]] : [];
+            });
+            const [currentTab, setCurrentTab] = useState(() => localStorage.getItem('currentTab') || 'study');
+
+            useEffect(() => localStorage.setItem('vocabLevels', JSON.stringify(selectedLevels)), [selectedLevels]);
+            useEffect(() => localStorage.setItem('currentTab', currentTab), [currentTab]);
+
+            // --- 類別篩選器狀態 (加入記憶功能) ---
+            const [selectedCategories, setSelectedCategories] = useState(() => {
+                try { return JSON.parse(localStorage.getItem('vocabCategories')) || []; } catch(e) { return []; }
+            });
+            useEffect(() => localStorage.setItem('vocabCategories', JSON.stringify(selectedCategories)), [selectedCategories]);
+
             const [showFilterModal, setShowFilterModal] = useState(false);
 
             const availableCategories = useMemo(() => {
@@ -205,6 +222,22 @@
             useEffect(() => {
                 const len = currentVocabList.length;
                 if (len > 0) {
+                    // 產生一組輕量級的 ID，用來驗證目前的單字庫是否跟上次聽的一模一樣
+                    const vocabKey = `${len}_${currentVocabList[0].id}_${currentVocabList[len-1].id}`;
+                    try {
+                        const saved = JSON.parse(localStorage.getItem('listeningProgress'));
+                        // 如果單字庫沒變，就完整還原上次的隨機陣列與進度
+                        if (saved && saved.vocabKey === vocabKey) {
+                            setListeningPlaylist(saved.playlist);
+                            setListeningIndex(saved.index < len ? saved.index : 0);
+                            setIsListeningRandom(!!saved.random);
+                            setIsListeningLoop(!!saved.loop);
+                            setIsStopped(true);
+                            setIsPlaying(false);
+                            return;
+                        }
+                    } catch (e) {}
+
                     setListeningPlaylist(generatePlaylist(len, isListeningRandomRef.current, 0));
                     setListeningIndex(0);
                     setIsStopped(true);
@@ -213,6 +246,20 @@
                     setListeningPlaylist([]);
                 }
             }, [currentVocabList]);
+
+            // 👉 新增：自動儲存聽力模式的任何進度改變
+            useEffect(() => {
+                if (currentVocabList.length > 0 && listeningPlaylist.length > 0) {
+                    const vocabKey = `${currentVocabList.length}_${currentVocabList[0].id}_${currentVocabList[currentVocabList.length-1].id}`;
+                    localStorage.setItem('listeningProgress', JSON.stringify({
+                        vocabKey,
+                        playlist: listeningPlaylist,
+                        index: listeningIndex,
+                        random: isListeningRandom,
+                        loop: isListeningLoop
+                    }));
+                }
+            }, [listeningIndex, listeningPlaylist, isListeningRandom, isListeningLoop, currentVocabList]);
 
             const currentAudioSourceRef = React.useRef(null);
             const sequenceIdRef = React.useRef(0);
