@@ -85,6 +85,17 @@
 
             const availableLevels = window.VOCAB_DB ? Object.keys(window.VOCAB_DB).sort() : [];
 
+            // 👉 新增：全域語速控制與記憶
+            const [playbackRate, setPlaybackRate] = useState(() => {
+                const saved = localStorage.getItem('vocabPlaybackRate');
+                return saved ? parseFloat(saved) : 1.0;
+            });
+            const playbackRateRef = React.useRef(playbackRate);
+            useEffect(() => {
+                playbackRateRef.current = playbackRate;
+                localStorage.setItem('vocabPlaybackRate', playbackRate);
+            }, [playbackRate]);
+
             // 👉 新增：記憶上次勾選的級別與分頁
             const [selectedLevels, setSelectedLevels] = useState(() => {
                 try {
@@ -346,6 +357,7 @@
                                 await new Promise((resolve) => {
                                     const source = ctx.createBufferSource();
                                     source.buffer = audioBuffer;
+                                    source.playbackRate.value = playbackRateRef.current; // 👉 應用當前語速
                                     source.connect(ctx.destination);
                                     currentAudioSourceRef.current = source;
                                     source.onended = () => { currentAudioSourceRef.current = null; resolve(); };
@@ -460,6 +472,7 @@
                         await new Promise(resolve => {
                             const source = ctx.createBufferSource();
                             source.buffer = audioBuffer;
+                            source.playbackRate.value = playbackRateRef.current; // 👉 應用當前語速
                             source.connect(ctx.destination);
                             currentAudioSourceRef.current = source;
                             source.onended = resolve;
@@ -690,7 +703,7 @@
                     <div className="max-w-xl mx-auto min-h-screen flex flex-col bg-slate-50">
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.1</span></h1>
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.2</span></h1>
                                 <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
                                     <i className="fas fa-download mr-1"></i>匯出紀錄
                                 </button>
@@ -703,6 +716,18 @@
                                         {lvl}
                                     </label>
                                 ))}
+                            </div>
+
+                            {/* 👉 新增：全域語速控制條 */}
+                            <div className="px-4 py-2 bg-slate-50 border-t flex items-center justify-between text-xs text-slate-500">
+                                <span className="font-bold flex items-center gap-1"><i className="fas fa-tachometer-alt"></i> 語速</span>
+                                <input
+                                    type="range" min="0.5" max="1.5" step="0.1"
+                                    value={playbackRate}
+                                    onChange={(e) => setPlaybackRate(parseFloat(e.target.value))}
+                                    className="flex-1 mx-3 accent-blue-600 cursor-pointer"
+                                />
+                                <span className="w-8 text-right font-bold text-slate-700">{playbackRate.toFixed(1)}x</span>
                             </div>
 
                             <div className="flex border-t">
