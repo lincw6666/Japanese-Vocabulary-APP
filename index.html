@@ -30,14 +30,33 @@
         const { useState, useEffect, useMemo, useCallback } = React;
 
         let globalAudioCtx = null;
+
+        // 👉 終極解法：監聽分頁切換與背景事件，一旦離開分頁或退到背景，立刻銷毀舊引擎
+        // 這能徹底避開 iOS Safari「切回分頁後硬體連線永久失效」的頑固 Bug [cite: 8, 9]
+        document.addEventListener('visibilitychange', () => {
+            if (globalAudioCtx) {
+                try { globalAudioCtx.close(); } catch(e) {}
+                globalAudioCtx = null;
+            }
+        });
+
+        window.addEventListener('pageshow', (event) => {
+            if (event.persisted && globalAudioCtx) {
+                try { globalAudioCtx.close(); } catch(e) {}
+                globalAudioCtx = null;
+            }
+        });
+
         const getAudioCtx = () => {
-            // 👉 修正：偵測 'closed' 狀態，當背景閒置太久被 OS 砍掉時，重新建立音效引擎
-            if (!globalAudioCtx || globalAudioCtx.state === 'closed') {
+            // 如果 Context 不存在、已被關閉，或處於 iOS 容易卡死的 interrupted 狀態，立刻重建
+            if (!globalAudioCtx || globalAudioCtx.state === 'closed' || globalAudioCtx.state === 'interrupted') {
+                if (globalAudioCtx) {
+                    try { globalAudioCtx.close(); } catch(e) {}
+                }
                 const AudioContext = window.AudioContext || window.webkitAudioContext;
                 globalAudioCtx = new AudioContext();
             }
-            // 👉 修正：相容 iOS Safari 的 'interrupted' 狀態
-            if (globalAudioCtx.state === 'suspended' || globalAudioCtx.state === 'interrupted') {
+            if (globalAudioCtx.state === 'suspended') {
                 globalAudioCtx.resume();
             }
             return globalAudioCtx;
@@ -671,7 +690,7 @@
                     <div className="max-w-xl mx-auto min-h-screen flex flex-col bg-slate-50">
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.0</span></h1>
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.1</span></h1>
                                 <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
                                     <i className="fas fa-download mr-1"></i>匯出紀錄
                                 </button>
