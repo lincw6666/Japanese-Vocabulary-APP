@@ -17,7 +17,7 @@ async def generate_edge_tts(text, voice, output_path, desc):
     if not text or os.path.exists(output_path):
         return False  # 已存在或無文字，不生成
 
-    print(f"🤖 [生成 {desc}] {text}")
+    print(f"🤖 [生成 {desc}] [{output_path.split('/')[-1]}] {text}")
     try:
         communicate = edge_tts.Communicate(text, voice)
         await communicate.save(output_path)
@@ -41,7 +41,7 @@ async def get_word_ja_audio(word_id, kanji, kana):
         if response.status_code == 200 and len(response.content) != 52288:
             with open(output_path, "wb") as f:
                 f.write(response.content)
-            print(f"✅ [真人發音] 單字下載成功: {kanji} ({kana})")
+            print(f"✅ [真人發音] 單字下載成功: [{word_id}] {kanji} ({kana})")
             return True
     except Exception as e:
         print(f"⚠️ 真人語音網路請求失敗: {e}")
