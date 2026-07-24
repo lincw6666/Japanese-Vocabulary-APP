@@ -74,6 +74,10 @@
             };
 
             const [stats, setStats] = useState(loadStats());
+            // 👉 新增：側邊欄開關與 GitHub 雲端同步狀態
+            const [showSidebar, setShowSidebar] = useState(false);
+            const [githubToken, setGithubToken] = useState(() => localStorage.getItem('vocabGithubToken') || '');
+            const [gistId, setGistId] = useState(() => localStorage.getItem('vocabGistId') || '');
 
             useEffect(() => {
                 try {
@@ -710,6 +714,84 @@
                 );
             }
 
+            // ☁️ GitHub 雲端同步功能 (安全過濾版)
+            const FILE_NAME = 'vocab_sync.json';
+
+            const syncToCloud = async () => {
+                if (!githubToken || !gistId) {
+                    alert('⚠️ 請先在側邊欄填寫 GitHub Token 與 Gist ID！');
+                    return;
+                }
+                try {
+                    // 👉 修改：手動挑選要上傳的資料，過濾掉機密 Token 與 ID
+                    const dataToSync = {};
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        // 只要不是 Token 和 ID，就加進準備上傳的物件中
+                        if (key !== 'vocabGithubToken' && key !== 'vocabGistId') {
+                            dataToSync[key] = localStorage.getItem(key);
+                        }
+                    }
+
+                    // 將過濾後的乾淨資料轉成字串
+                    const cleanData = JSON.stringify(dataToSync);
+
+                    const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+                        method: 'PATCH',
+                        headers: {
+                            'Authorization': `Bearer ${githubToken}`,
+                            'Accept': 'application/vnd.github.v3+json',
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            files: { [FILE_NAME]: { content: cleanData } }
+                        })
+                    });
+
+                    if (response.ok) alert('☁️ ✅ 學習進度已成功備份至雲端！(已安全過濾憑證)');
+                    else throw new Error(`API Error: ${response.status}`);
+                } catch (error) {
+                    console.error('Sync failed:', error);
+                    alert('❌ 上傳失敗，請檢查 Token/ID 是否正確。');
+                }
+            };
+
+            const syncFromCloud = async () => {
+                if (!githubToken || !gistId) {
+                    alert('⚠️ 請先在側邊欄填寫 GitHub Token 與 Gist ID！');
+                    return;
+                }
+                try {
+                    const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+                        method: 'GET',
+                        headers: {
+                            'Authorization': `Bearer ${githubToken}`,
+                            'Accept': 'application/vnd.github.v3+json',
+                        }
+                    });
+
+                    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+
+                    const gistData = await response.json();
+                    const fileContent = gistData.files[FILE_NAME].content;
+
+                    const parsedData = JSON.parse(fileContent);
+
+                    // 👉 修改：雙重保險，寫入本地時再次確認不會覆蓋掉憑證
+                    Object.keys(parsedData).forEach(key => {
+                        if (key !== 'vocabGithubToken' && key !== 'vocabGistId') {
+                            localStorage.setItem(key, parsedData[key]);
+                        }
+                    });
+
+                    alert('📱 🎉 雲端進度已載入！畫面即將重新整理。');
+                    location.reload();
+                } catch (error) {
+                    console.error('Download failed:', error);
+                    alert('❌ 下載失敗，請確認雲端是否有資料或 ID 是否正確。');
+                }
+            };
+
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
             const [isUnlocked, setIsUnlocked] = useState(!isIOS);
 
@@ -733,39 +815,103 @@
                     )}
 
                     <div className="max-w-xl mx-auto min-h-screen flex flex-col bg-slate-50">
+                        {/* 👉 新增：側邊欄 (設定與同步) */}
+                        {showSidebar && (
+                            <div className="fixed inset-0 bg-slate-900/60 z-50 flex justify-start backdrop-blur-sm" onClick={() => setShowSidebar(false)}>
+                                <div
+                                    className="bg-white w-80 h-full shadow-2xl flex flex-col transform transition-transform duration-300 translate-x-0"
+                                    onClick={e => e.stopPropagation()}
+                                >
+                                    <div className="p-5 flex justify-between items-center border-b">
+                                        <h2 className="text-lg font-bold text-slate-800"><i className="fas fa-sliders-h mr-2 text-blue-500"></i>設置與同步</h2>
+                                        <button onClick={() => setShowSidebar(false)} className="text-slate-400 hover:text-slate-600 text-2xl active:scale-90 transition-transform">
+                                            <i className="fas fa-times"></i>
+                                        </button>
+                                    </div>
+
+                                    <div className="p-5 flex-1 overflow-y-auto">
+                                        {/* 級別選擇 */}
+                                        <div className="mb-8">
+                                            <h3 className="text-sm font-bold text-slate-500 mb-3">級別 (N1-N5)</h3>
+                                            <div className="grid grid-cols-3 gap-2">
+                                                {availableLevels.map(lvl => (
+                                                    <label key={lvl} className={`flex justify-center items-center py-2 rounded-lg cursor-pointer text-sm font-bold border transition-all active:scale-95 ${selectedLevels.includes(lvl) ? 'bg-blue-50 border-blue-500 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+                                                        <input type="checkbox" className="hidden" checked={selectedLevels.includes(lvl)} onChange={(e) => { if(e.target.checked) setSelectedLevels([...selectedLevels, lvl]); else if(selectedLevels.length > 1) setSelectedLevels(selectedLevels.filter(l => l !== lvl)); }} />
+                                                        {lvl}
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* 語速控制 */}
+                                        <div className="mb-8">
+                                            <h3 className="text-sm font-bold text-slate-500 mb-3">語速控制</h3>
+                                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                                                <div className="flex justify-between text-xs font-bold text-blue-600 mb-3">
+                                                    <span>0.5x</span>
+                                                    <span className="bg-white px-2 py-1 rounded shadow-sm border border-slate-200">目前: {playbackRate.toFixed(1)}x</span>
+                                                    <span>1.5x</span>
+                                                </div>
+                                                <input
+                                                    type="range" min="0.5" max="1.5" step="0.1"
+                                                    value={playbackRate}
+                                                    onChange={(e) => setPlaybackRate(parseFloat(e.target.value))}
+                                                    className="w-full accent-blue-600 cursor-pointer"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* GitHub 雲端同步 */}
+                                        <div className="mb-8">
+                                            <h3 className="text-sm font-bold text-slate-500 mb-3">雲端同步 (GitHub Gist API)</h3>
+                                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col gap-3">
+                                                <input
+                                                    type="text"
+                                                    placeholder="貼上 GitHub Token"
+                                                    className="w-full p-2.5 text-xs border rounded-lg outline-none focus:border-blue-500 shadow-sm"
+                                                    value={githubToken}
+                                                    onChange={(e) => {setGithubToken(e.target.value); localStorage.setItem('vocabGithubToken', e.target.value);}}
+                                                />
+                                                <input
+                                                    type="text"
+                                                    placeholder="貼上 Gist ID"
+                                                    className="w-full p-2.5 text-xs border rounded-lg outline-none focus:border-blue-500 shadow-sm"
+                                                    value={gistId}
+                                                    onChange={(e) => {setGistId(e.target.value); localStorage.setItem('vocabGistId', e.target.value);}}
+                                                />
+                                                <div className="grid grid-cols-2 gap-2 mt-2">
+                                                    <button onClick={syncToCloud} className="bg-blue-600 text-white text-xs font-bold py-3 rounded-lg shadow-md hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center">
+                                                        <i className="fas fa-cloud-upload-alt mr-1"></i>上傳進度
+                                                    </button>
+                                                    <button onClick={syncFromCloud} className="bg-slate-700 text-white text-xs font-bold py-3 rounded-lg shadow-md hover:bg-slate-800 active:scale-95 transition-all flex items-center justify-center">
+                                                        <i className="fas fa-cloud-download-alt mr-1"></i>下載進度
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.3</span></h1>
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.4</span></h1>
                                 <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
                                     <i className="fas fa-download mr-1"></i>匯出紀錄
                                 </button>
                             </div>
 
-                            <div className="px-4 pb-2 flex gap-2 overflow-x-auto">
-                                {availableLevels.map(lvl => (
-                                    <label key={lvl} className="flex items-center gap-1 bg-blue-50 px-2 py-1 rounded cursor-pointer text-sm select-none hover:bg-blue-100">
-                                        <input type="checkbox" className="accent-blue-600" checked={selectedLevels.includes(lvl)} onChange={(e) => { if(e.target.checked) setSelectedLevels([...selectedLevels, lvl]); else if(selectedLevels.length > 1) setSelectedLevels(selectedLevels.filter(l => l !== lvl)); }} />
-                                        {lvl}
-                                    </label>
-                                ))}
-                            </div>
-
-                            {/* 👉 新增：全域語速控制條 */}
-                            <div className="px-4 py-2 bg-slate-50 border-t flex items-center justify-between text-xs text-slate-500">
-                                <span className="font-bold flex items-center gap-1"><i className="fas fa-tachometer-alt"></i> 語速</span>
-                                <input
-                                    type="range" min="0.5" max="1.5" step="0.1"
-                                    value={playbackRate}
-                                    onChange={(e) => setPlaybackRate(parseFloat(e.target.value))}
-                                    className="flex-1 mx-3 accent-blue-600 cursor-pointer"
-                                />
-                                <span className="w-8 text-right font-bold text-slate-700">{playbackRate.toFixed(1)}x</span>
-                            </div>
-
-                            <div className="flex border-t">
-                                <button onClick={() => setCurrentTab('study')} className={`flex-1 py-3 text-sm tab-btn ${currentTab === 'study' ? 'active' : 'text-slate-500'}`}>學習模式</button>
-                                <button onClick={() => setCurrentTab('listening')} className={`flex-1 py-3 text-sm tab-btn ${currentTab === 'listening' ? 'active' : 'text-slate-500'}`}>聽力模式</button>
-                                <button onClick={() => setCurrentTab('exam_setup')} className={`flex-1 py-3 text-sm tab-btn ${currentTab.startsWith('exam') ? 'active' : 'text-slate-500'}`}>考試模式</button>
+                            {/* 👉 修改：加入側邊欄按鈕，並重新排列 Tab */}
+                            <div className="flex border-t items-stretch bg-slate-50">
+                                <button
+                                    onClick={() => setShowSidebar(true)}
+                                    className="w-14 flex-shrink-0 bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700 transition-colors shadow-inner"
+                                >
+                                    <i className="fas fa-cog text-xl"></i>
+                                </button>
+                                <button onClick={() => setCurrentTab('study')} className={`flex-1 py-3 text-sm tab-btn ${currentTab === 'study' ? 'active bg-white' : 'text-slate-500'}`}>學習模式</button>
+                                <button onClick={() => setCurrentTab('listening')} className={`flex-1 py-3 text-sm tab-btn ${currentTab === 'listening' ? 'active bg-white' : 'text-slate-500'}`}>聽力模式</button>
+                                <button onClick={() => setCurrentTab('exam_setup')} className={`flex-1 py-3 text-sm tab-btn ${currentTab.startsWith('exam') ? 'active bg-white' : 'text-slate-500'}`}>考試模式</button>
                             </div>
                         </div>
 
