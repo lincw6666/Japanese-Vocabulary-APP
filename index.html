@@ -158,6 +158,30 @@
                 }
             }, [viewedIds]);
 
+            // 👉 新增：我的最愛狀態與開關
+            const [favoriteIds, setFavoriteIds] = useState(() => {
+                try {
+                    const stored = JSON.parse(localStorage.getItem('vocabFavorites'));
+                    return stored ? new Set(stored) : new Set();
+                } catch (e) { return new Set(); }
+            });
+
+            useEffect(() => {
+                localStorage.setItem('vocabFavorites', JSON.stringify(Array.from(favoriteIds)));
+            }, [favoriteIds]);
+
+            const toggleFavorite = (id) => {
+                setFavoriteIds(prev => {
+                    const next = new Set(prev);
+                    if (next.has(id)) next.delete(id);
+                    else next.add(id);
+                    return next;
+                });
+            };
+
+            const [isFavoritesMode, setIsFavoritesMode] = useState(() => localStorage.getItem('isFavoritesMode') === 'true');
+            useEffect(() => localStorage.setItem('isFavoritesMode', isFavoritesMode), [isFavoritesMode]);
+
             // 👉 修正：加入學習模式各項開關的記憶功能
             const [hideKana, setHideKana] = useState(() => localStorage.getItem('hideKana') === 'true');
             const [hideKanji, setHideKanji] = useState(() => localStorage.getItem('hideKanji') === 'true');
@@ -201,10 +225,17 @@
             const [isReviewMistakesMode, setIsReviewMistakesMode] = useState(() => localStorage.getItem('isReviewMistakesMode') === 'true');
             useEffect(() => localStorage.setItem('isReviewMistakesMode', isReviewMistakesMode), [isReviewMistakesMode]);
 
-            const studyVocabList = useMemo(() => {
-                if (!isReviewMistakesMode) return currentVocabList;
+            // 👉 新增：套用「我的最愛」過濾後的作用中列表
+            const activeVocabList = useMemo(() => {
+                if (isFavoritesMode) return currentVocabList.filter(w => favoriteIds.has(w.id));
+                return currentVocabList;
+            }, [currentVocabList, isFavoritesMode, favoriteIds]);
 
-                return [...currentVocabList].filter(word => {
+            // 👉 修改：學習模式改為基於 activeVocabList
+            const studyVocabList = useMemo(() => {
+                if (!isReviewMistakesMode) return activeVocabList;
+
+                return [...activeVocabList].filter(word => {
                     const s = stats[word.id];
                     if (!s || !s.history) return false;
                     return s.history.filter(res => !res).length > 0; // 近 10 次內有錯過才顯示
@@ -218,7 +249,7 @@
                     const totalB = stats[b.id].wrong || 0;
                     return totalB - totalA;
                 });
-            }, [currentVocabList, isReviewMistakesMode, stats]);
+            }, [activeVocabList, isReviewMistakesMode, stats]);
 
             // 👉 修正：讀取並記憶學習模式進度 (取代原本單純的 setStudyIndex(0))
             useEffect(() => {
@@ -286,10 +317,10 @@
             };
 
             useEffect(() => {
-                const len = currentVocabList.length;
+                const len = activeVocabList.length;
                 if (len > 0) {
                     // 產生一組輕量級的 ID，用來驗證目前的單字庫是否跟上次聽的一模一樣
-                    const vocabKey = `${len}_${currentVocabList[0].id}_${currentVocabList[len-1].id}`;
+                    const vocabKey = `${len}_${activeVocabList[0].id}_${activeVocabList[len-1].id}`;
                     try {
                         const saved = JSON.parse(localStorage.getItem('listeningProgress'));
                         // 如果單字庫沒變，就完整還原上次的隨機陣列與進度
@@ -311,12 +342,12 @@
                 } else {
                     setListeningPlaylist([]);
                 }
-            }, [currentVocabList]);
+            }, [activeVocabList]);
 
             // 👉 新增：自動儲存聽力模式的任何進度改變
             useEffect(() => {
-                if (currentVocabList.length > 0 && listeningPlaylist.length > 0) {
-                    const vocabKey = `${currentVocabList.length}_${currentVocabList[0].id}_${currentVocabList[currentVocabList.length-1].id}`;
+                if (activeVocabList.length > 0 && listeningPlaylist.length > 0) {
+                    const vocabKey = `${activeVocabList.length}_${activeVocabList[0].id}_${activeVocabList[activeVocabList.length-1].id}`;
                     localStorage.setItem('listeningProgress', JSON.stringify({
                         vocabKey,
                         playlist: listeningPlaylist,
@@ -325,13 +356,13 @@
                         loop: isListeningLoop
                     }));
                 }
-            }, [listeningIndex, listeningPlaylist, isListeningRandom, isListeningLoop, currentVocabList]);
+            }, [listeningIndex, listeningPlaylist, isListeningRandom, isListeningLoop, activeVocabList]);
 
             const currentAudioSourceRef = React.useRef(null);
             const sequenceIdRef = React.useRef(0);
 
             useEffect(() => {
-                if (currentTab !== 'listening' || !isPlaying || currentVocabList.length === 0 || listeningPlaylist.length === 0) {
+                if (currentTab !== 'listening' || !isPlaying || activeVocabList.length === 0 || listeningPlaylist.length === 0) {
                     stopCurrentAudio();
                     sequenceIdRef.current++;
                     return;
@@ -339,7 +370,7 @@
 
                 let isCancelled = false;
                 const seqId = ++sequenceIdRef.current;
-                const word = currentVocabList[listeningPlaylist[listeningIndex]];
+                const word = activeVocabList[listeningPlaylist[listeningIndex]];
 
                 const runSequence = async () => {
                     const items = [
@@ -408,7 +439,7 @@
                     await new Promise(r => setTimeout(r, 1500));
                     if (isCancelled || sequenceIdRef.current !== seqId) return;
 
-                    const len = currentVocabList.length;
+                    const len = activeVocabList.length;
                     if (listeningIndex + 1 >= len) {
                         if (!isListeningLoopRef.current) {
                             setIsPlaying(false); setIsStopped(true);
@@ -423,11 +454,11 @@
 
                 runSequence();
                 return () => { isCancelled = true; stopCurrentAudio(); };
-            }, [listeningIndex, isPlaying, currentTab, currentVocabList, isListeningRandom]);
+            }, [listeningIndex, isPlaying, currentTab, activeVocabList, isListeningRandom]);
 
             const handleListeningJump = (step) => {
                 setListeningIndex(prev => {
-                    const len = currentVocabList.length;
+                    const len = activeVocabList.length;
                     if (len === 0) return 0;
                     let next = prev + step;
                     if (next < 0) next = (next % len + len) % len;
@@ -462,7 +493,7 @@
                 getAudioCtx();
                 if (!isPlaying) {
                     if (isStopped) {
-                        const len = currentVocabList.length;
+                        const len = activeVocabList.length;
                         const currentAbsoluteIdx = listeningPlaylist.length > 0 ? listeningPlaylist[listeningIndex] : 0;
                         setListeningPlaylist(generatePlaylist(len, isListeningRandom, isListeningRandom ? 0 : currentAbsoluteIdx));
                         setListeningIndex(0);
@@ -606,6 +637,12 @@
                 if (examConfig.mode === 'mistakes') {
                     pool = pool.filter(v => ((stats[v.id] && stats[v.id].wrong) || 0) > 0);
                     if (pool.length < 4) { alert("答錯題目太少，無法進行錯題模式！(至少需4題)"); return; }
+                } else if (examConfig.mode === 'favorites') {
+                    pool = pool.filter(v => favoriteIds.has(v.id));
+                    if (pool.length < 4) { alert("「我的最愛」單字太少！(至少需4題)"); return; }
+                } else if (examConfig.mode === 'viewed') {
+                    pool = pool.filter(v => viewedIds.has(v.id));
+                    if (pool.length < 4) { alert("已學習單字太少！請先到學習模式瀏覽單字 (至少需4題)"); return; }
                 } else if (examConfig.mode === 'weighted') {
                     pool.sort((a, b) => {
                         const rateA = ((stats[a.id] && stats[a.id].wrong) || 0) / (((stats[a.id] && stats[a.id].correct) || 0) + ((stats[a.id] && stats[a.id].wrong) || 0) + 1);
@@ -895,7 +932,7 @@
                         )}
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.4</span></h1>
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.5</span></h1>
                                 <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
                                     <i className="fas fa-download mr-1"></i>匯出紀錄
                                 </button>
@@ -976,18 +1013,39 @@
                             {currentTab === 'study' && (() => {
                                 if (currentVocabList.length === 0) return null;
 
+                                if (isFavoritesMode && activeVocabList.length === 0) {
+                                    return (
+                                        <div className="flex flex-col flex-1 items-center justify-center text-center p-6 bg-white rounded-2xl shadow-sm border border-slate-100 mt-4">
+                                            <i className="far fa-heart text-6xl text-red-300 mb-6 drop-shadow-md"></i>
+                                            <h3 className="text-xl font-bold text-slate-800 mb-2">尚未加入最愛</h3>
+                                            <p className="text-slate-500 text-sm">請先關閉最愛模式，在單字卡右上角點擊愛心將單字加入！</p>
+                                            <button onClick={() => setIsFavoritesMode(false)} className="mt-8 py-3 px-8 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all">關閉最愛模式</button>
+                                        </div>
+                                    );
+                                }
+
+                                /* 👉 新增：最愛和錯題本同開，但交集為空時的專屬防呆 */
+                                if (isFavoritesMode && isReviewMistakesMode && studyVocabList.length === 0) {
+                                    return (
+                                        <div className="flex flex-col flex-1 items-center justify-center text-center p-6 bg-white rounded-2xl shadow-sm border border-slate-100 mt-4">
+                                            <i className="fas fa-search text-6xl text-slate-300 mb-6 drop-shadow-md"></i>
+                                            <h3 className="text-xl font-bold text-slate-800 mb-2">最愛名單中無錯題</h3>
+                                            <p className="text-slate-500 text-sm">目前您的「我的最愛」單字中，近 10 次測驗都沒有錯誤紀錄喔！</p>
+                                            <div className="flex gap-4 mt-8">
+                                                <button onClick={() => setIsReviewMistakesMode(false)} className="py-3 px-6 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all">關閉錯題本</button>
+                                                <button onClick={() => setIsFavoritesMode(false)} className="py-3 px-6 bg-slate-600 text-white font-bold rounded-xl shadow-lg hover:bg-slate-700 active:scale-95 transition-all">關閉最愛</button>
+                                            </div>
+                                        </div>
+                                    );
+                                }
+
                                 if (isReviewMistakesMode && studyVocabList.length === 0) {
                                     return (
                                         <div className="flex flex-col flex-1 items-center justify-center text-center p-6 bg-white rounded-2xl shadow-sm border border-slate-100 mt-4">
                                             <i className="fas fa-glass-cheers text-6xl text-amber-400 mb-6 drop-shadow-md animate-bounce"></i>
                                             <h3 className="text-xl font-bold text-slate-800 mb-2">太棒了！無錯題！</h3>
                                             <p className="text-slate-500 text-sm">目前範圍內，您近 10 次測驗都沒有答錯任何單字哦！</p>
-                                            <button
-                                                onClick={() => setIsReviewMistakesMode(false)}
-                                                className="mt-8 py-3 px-8 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all"
-                                            >
-                                                返回全部單字
-                                            </button>
+                                            <button onClick={() => setIsReviewMistakesMode(false)} className="mt-8 py-3 px-8 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all">返回全部單字</button>
                                         </div>
                                     );
                                 }
@@ -1033,26 +1091,27 @@
                                         </div>
 
                                         <div className="bg-white rounded-2xl shadow-sm p-6 text-center relative mb-4">
-                                            <button
-                                                onClick={() => speak(word, false)}
-                                                className={`absolute top-4 right-4 text-xl text-slate-400 hover:text-blue-500`}
-                                            >
-                                                <i className="fas fa-volume-up"></i>
-                                            </button>
+                                            <div className="absolute top-4 right-4 flex items-center gap-3 z-10">
+                                                <button onClick={() => toggleFavorite(word.id)} className="text-2xl hover:scale-110 active:scale-95 transition-transform">
+                                                    {favoriteIds.has(word.id) ? <i className="fas fa-heart text-red-500 drop-shadow-sm"></i> : <i className="far fa-heart text-slate-300 hover:text-red-400"></i>}
+                                                </button>
+                                                <button onClick={() => speak(word, false)} className="text-xl text-slate-400 hover:text-blue-500 transition-colors">
+                                                    <i className="fas fa-volume-up"></i>
+                                                </button>
+                                            </div>
 
                                             <div className="absolute top-4 left-4 flex flex-col gap-2 items-start z-10">
-                                                <button
-                                                    onClick={() => setIsReviewMistakesMode(!isReviewMistakesMode)}
-                                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-full shadow-sm border transition-all active:scale-95 flex items-center ${isReviewMistakesMode ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'}`}
-                                                >
+                                                <button onClick={() => setIsReviewMistakesMode(!isReviewMistakesMode)} className={`text-[11px] font-bold px-3 py-1.5 rounded-full shadow-sm border transition-all active:scale-95 flex items-center ${isReviewMistakesMode ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'}`}>
                                                     <i className={`fas fa-book-dead mr-1 ${isReviewMistakesMode ? 'animate-pulse' : ''}`}></i>{isReviewMistakesMode ? '錯題本: 開' : '錯題本: 關'}
                                                 </button>
-                                                <button
-                                                    onClick={() => setIsRandomStudy(!isRandomStudy)}
-                                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-full shadow-sm border transition-all active:scale-95 flex items-center ${isRandomStudy ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'}`}
-                                                >
-                                                    <i className="fas fa-random mr-1"></i>{isRandomStudy ? '隨機' : '循序'}
-                                                </button>
+                                                <div className="flex gap-2">
+                                                    <button onClick={() => setIsRandomStudy(!isRandomStudy)} className={`text-[11px] font-bold px-3 py-1.5 rounded-full shadow-sm border transition-all active:scale-95 flex items-center ${isRandomStudy ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'}`}>
+                                                        <i className="fas fa-random mr-1"></i>{isRandomStudy ? '隨機' : '循序'}
+                                                    </button>
+                                                    <button onClick={() => setIsFavoritesMode(!isFavoritesMode)} className={`text-[11px] font-bold px-3 py-1.5 rounded-full shadow-sm border transition-all active:scale-95 flex items-center ${isFavoritesMode ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'}`}>
+                                                        <i className={`fas fa-heart mr-1 ${isFavoritesMode ? 'animate-pulse' : ''}`}></i>{isFavoritesMode ? '最愛: 開' : '最愛: 關'}
+                                                    </button>
+                                                </div>
                                             </div>
 
                                             <div className="flex items-stretch justify-between mt-16 mb-2 gap-3 px-1">
@@ -1126,8 +1185,19 @@
                                 );
                             })()}
 
-                            {currentTab === 'listening' && currentVocabList.length > 0 && listeningPlaylist.length > 0 && (() => {
-                                const word = currentVocabList[listeningPlaylist[listeningIndex]];
+                            {currentTab === 'listening' && currentVocabList.length > 0 && (() => {
+                                if (isFavoritesMode && activeVocabList.length === 0) {
+                                    return (
+                                        <div className="flex flex-col flex-1 items-center justify-center text-center p-6 bg-white rounded-2xl shadow-sm border border-slate-100 mt-4">
+                                            <i className="far fa-heart text-6xl text-red-300 mb-6 drop-shadow-md"></i>
+                                            <h3 className="text-xl font-bold text-slate-800 mb-2">尚未加入最愛</h3>
+                                            <p className="text-slate-500 text-sm">請先關閉最愛模式，在學習模式右上角點擊愛心將單字加入！</p>
+                                            <button onClick={() => setIsFavoritesMode(false)} className="mt-8 py-3 px-8 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all">返回全部單字</button>
+                                        </div>
+                                    );
+                                }
+                                if (listeningPlaylist.length === 0) return null;
+                                const word = activeVocabList[listeningPlaylist[listeningIndex]];
                                 if (!word) return null;
 
                                 return (
@@ -1143,7 +1213,7 @@
                                                 className="w-full p-3 pr-10 border border-slate-200 rounded-xl bg-white text-slate-700 text-sm font-bold shadow-sm outline-none focus:border-blue-500 appearance-none cursor-pointer"
                                             >
                                                 {listeningPlaylist.map((vocabIdx, i) => {
-                                                    const w = currentVocabList[vocabIdx];
+                                                    const w = activeVocabList[vocabIdx];
                                                     return (
                                                         <option key={w.id} value={i}>
                                                             {i + 1}. {w.kanji} - {w.meaning}
@@ -1156,8 +1226,13 @@
                                             </div>
                                         </div>
 
-                                        <div className="bg-white rounded-2xl shadow-sm p-6 text-center mb-4 flex-1 flex flex-col justify-center">
-                                            <div className="text-5xl font-bold py-2 text-slate-800">{word.kanji}</div>
+                                        <div className="bg-white rounded-2xl shadow-sm p-6 text-center mb-4 flex-1 flex flex-col justify-center relative">
+                                            <div className="absolute top-4 right-4 flex items-center gap-3 z-10">
+                                                <button onClick={() => toggleFavorite(word.id)} className="text-2xl hover:scale-110 active:scale-95 transition-transform">
+                                                    {favoriteIds.has(word.id) ? <i className="fas fa-heart text-red-500 drop-shadow-sm"></i> : <i className="far fa-heart text-slate-300 hover:text-red-400"></i>}
+                                                </button>
+                                            </div>
+                                            <div className="text-5xl font-bold py-2 text-slate-800 mt-4">{word.kanji}</div>
                                             <div className="flex justify-center items-center gap-2 py-2">
                                                 <span className="text-2xl text-slate-600">{word.kana}</span>
                                                 {word.accent !== undefined && <span className="text-xs bg-blue-50 text-blue-500 px-2 rounded-full">[{word.accent}]</span>}
@@ -1197,10 +1272,13 @@
                                                         <i className="fas fa-random"></i> {isListeningRandom ? '隨機 (洗牌)' : '循序'}
                                                     </button>
                                                     <button onClick={() => setIsListeningLoop(!isListeningLoop)} className={`flex items-center gap-1 transition-colors ${isListeningLoop ? 'text-blue-400' : 'text-slate-400 hover:text-slate-200'}`}>
-                                                        <i className="fas fa-redo"></i> {isListeningLoop ? '循環: 開' : '循環: 關'}
+                                                        <i className="fas fa-redo"></i> {isListeningLoop ? '循環: 開' : '關'}
+                                                    </button>
+                                                    <button onClick={() => { stopCurrentAudio(); setIsFavoritesMode(!isFavoritesMode); }} className={`flex items-center gap-1 transition-colors ${isFavoritesMode ? 'text-red-400' : 'text-slate-400 hover:text-slate-200'}`}>
+                                                        <i className="fas fa-heart"></i> {isFavoritesMode ? '最愛: 開' : '關'}
                                                     </button>
                                                 </div>
-                                                <span className="text-slate-400 bg-slate-700/50 px-2 py-1 rounded-full">{listeningIndex + 1} / {currentVocabList.length}</span>
+                                                <span className="text-slate-400 bg-slate-700/50 px-2 py-1 rounded-full">{listeningIndex + 1} / {activeVocabList.length}</span> {/* 👉 這裡修正 */}
                                             </div>
 
                                             <div className="flex justify-between items-center px-1">
@@ -1258,6 +1336,8 @@
                                             <option value="random">完全隨機抽考</option>
                                             <option value="weighted">弱點加權 (錯越多越容易出)</option>
                                             <option value="mistakes">地獄錯題本 (只考曾經錯過的)</option>
+                                            <option value="favorites">我的最愛 (隨機)</option>
+                                            <option value="viewed">已學習單字 (隨機)</option>
                                         </select>
                                     </div>
 
