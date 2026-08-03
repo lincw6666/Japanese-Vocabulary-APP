@@ -372,6 +372,8 @@
                 const seqId = ++sequenceIdRef.current;
                 const word = activeVocabList[listeningPlaylist[listeningIndex]];
 
+                if (!word) return; // 👉 關鍵防呆：避免切換瞬間陣列尚未同步導致 crash
+
                 const runSequence = async () => {
                     const items = [
                         { url: `./audio/${word.id}_ja.mp3`, delay: 500 },
@@ -418,7 +420,11 @@
                                 }
 
                                 const arrayBuffer = await response.arrayBuffer();
-                                const audioBuffer = await new Promise((res, rej) => ctx.decodeAudioData(arrayBuffer, res, rej));
+                                // 👉 防護 2-1：強制捕捉 Safari 解碼器的同步崩潰
+                                const audioBuffer = await new Promise((res, rej) => {
+                                    try { ctx.decodeAudioData(arrayBuffer, res, rej); }
+                                    catch (e) { rej(e); }
+                                });
                                 if (isCancelled || sequenceIdRef.current !== seqId) return;
 
                                 await new Promise((resolve) => {
@@ -533,7 +539,11 @@
                         }
 
                         const arrayBuffer = await response.arrayBuffer();
-                        const audioBuffer = await new Promise((res, rej) => ctx.decodeAudioData(arrayBuffer, res, rej));
+                        // 👉 防護 2-2：強制捕捉 Safari 解碼器的同步崩潰
+                        const audioBuffer = await new Promise((res, rej) => {
+                            try { ctx.decodeAudioData(arrayBuffer, res, rej); }
+                            catch (e) { rej(e); }
+                        });
                         if (speakSequenceIdRef.current !== currentSeq) break;
 
                         await new Promise(resolve => {
@@ -932,7 +942,7 @@
                         )}
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.5</span></h1>
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.5.1</span></h1>
                                 <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
                                     <i className="fas fa-download mr-1"></i>匯出紀錄
                                 </button>
@@ -1214,6 +1224,7 @@
                                             >
                                                 {listeningPlaylist.map((vocabIdx, i) => {
                                                     const w = activeVocabList[vocabIdx];
+                                                    if (!w) return null; // 👉 關鍵防呆：過濾掉畫面過渡期 undefined 的單字
                                                     return (
                                                         <option key={w.id} value={i}>
                                                             {i + 1}. {w.kanji} - {w.meaning}
