@@ -196,7 +196,12 @@
             }, [hideKana, hideKanji, hideMeaning, isRandomStudy]);
 
             // --- 考試模式新狀態 ---
-            const [examConfig, setExamConfig] = useState({ type: 'standard', hideKanji: false, hideKana: true, hideMeaning: false, mode: 'random' });
+            const [examConfig, setExamConfig] = useState({
+                type: 'standard',
+                hideKanji: false, hideKana: true, hideMeaning: false,
+                testKanji: false, testKana: true, testMeaning: false,
+                mode: 'random'
+            });
             const [examQuestions, setExamQuestions] = useState([]);
             const [examIndex, setExamIndex] = useState(0);
             const [examAnswers, setExamAnswers] = useState({});
@@ -658,8 +663,13 @@
 
                 if (examConfig.type === 'standard') {
                     const hiddenCount = [examConfig.hideKanji, examConfig.hideKana, examConfig.hideMeaning].filter(Boolean).length;
-                    if (hiddenCount === 0 || hiddenCount > 2) {
-                        alert("請選擇遮擋 1 到 2 個欄位！");
+                    const testCount = [examConfig.testKanji, examConfig.testKana, examConfig.testMeaning].filter(Boolean).length;
+                    if (hiddenCount === 0 || hiddenCount === 3) {
+                        alert("題幹隱藏欄位請選擇 1 到 2 個！");
+                        return;
+                    }
+                    if (testCount === 0) {
+                        alert("請至少選擇 1 個要測驗的項目！");
                         return;
                     }
                 }
@@ -695,26 +705,31 @@
                 }
 
                 const generateOptions = (correctWord, field) => {
-                    const options = new Set([correctWord[field]]);
-                    while(options.size < 4 && options.size < currentVocabList.length) {
+                    const options = [correctWord]; // 改為放入完整單字物件
+                    const usedValues = new Set([correctWord[field]]); // 用來檢查字串是否重複
+
+                    while(options.length < 4 && options.length < currentVocabList.length) {
                         const randomWord = currentVocabList[Math.floor(Math.random() * currentVocabList.length)];
-                        options.add(randomWord[field]);
+                        // 確保選項的字串不會跟已有的選項重複
+                        if (!usedValues.has(randomWord[field])) {
+                            options.push(randomWord);
+                            usedValues.add(randomWord[field]);
+                        }
                     }
 
                     // 👉 修正：選項也改用 Fisher-Yates 洗牌，避免正確答案偏向特定位置
-                    const optionsArray = Array.from(options);
-                    for (let i = optionsArray.length - 1; i > 0; i--) {
+                    for (let i = options.length - 1; i > 0; i--) {
                         const j = Math.floor(Math.random() * (i + 1));
-                        [optionsArray[i], optionsArray[j]] = [optionsArray[j], optionsArray[i]];
+                        [options[i], options[j]] = [options[j], options[i]];
                     }
-                    return optionsArray;
+                    return options;
                 };
 
                 const questions = pool.map(word => ({
                     word,
-                    optionsKanji: (examConfig.type === 'listening' || examConfig.hideKanji) ? generateOptions(word, 'kanji') : null,
-                    optionsKana: (examConfig.type !== 'listening' && examConfig.hideKana) ? generateOptions(word, 'kana') : null,
-                    optionsMeaning: (examConfig.type !== 'listening' && examConfig.hideMeaning) ? generateOptions(word, 'meaning') : null,
+                    optionsKanji: (examConfig.type === 'listening' || examConfig.testKanji) ? generateOptions(word, 'kanji') : null,
+                    optionsKana: (examConfig.type !== 'listening' && examConfig.testKana) ? generateOptions(word, 'kana') : null,
+                    optionsMeaning: (examConfig.type !== 'listening' && examConfig.testMeaning) ? generateOptions(word, 'meaning') : null,
                 }));
 
                 setExamQuestions(questions);
@@ -730,9 +745,9 @@
             const submitStandardAnswer = () => {
                 const q = examQuestions[examIndex];
                 let isCorrect = true;
-                if (examConfig.hideKanji && examAnswers.kanji !== q.word.kanji) isCorrect = false;
-                if (examConfig.hideKana && examAnswers.kana !== q.word.kana) isCorrect = false;
-                if (examConfig.hideMeaning && examAnswers.meaning !== q.word.meaning) isCorrect = false;
+                if (examConfig.testKanji && examAnswers.kanji !== q.word.kanji) isCorrect = false;
+                if (examConfig.testKana && examAnswers.kana !== q.word.kana) isCorrect = false;
+                if (examConfig.testMeaning && examAnswers.meaning !== q.word.meaning) isCorrect = false;
 
                 updateStats(q.word.id, isCorrect);
                 setTestedWords(prev => {
@@ -980,7 +995,7 @@
                         )}
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.6.1</span></h1>
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.7</span></h1>
                                 <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
                                     <i className="fas fa-download mr-1"></i>匯出紀錄
                                 </button>
@@ -1365,16 +1380,39 @@
                                     </div>
 
                                     <div className={`mb-6 transition-opacity ${examConfig.type === 'listening' ? 'opacity-30 pointer-events-none' : ''}`}>
-                                        <p className="text-sm font-bold text-slate-500 mb-2">要遮擋哪些欄位？(最多選 2 個)</p>
+                                        <p className="text-sm font-bold text-slate-500 mb-2">1. 隱藏欄位 (不顯示在上方題幹)</p>
+                                        <div className="grid grid-cols-3 gap-2 mb-4">
+                                            <label className={`block text-center py-2 border rounded-xl font-bold cursor-pointer transition-colors ${examConfig.hideKanji?'bg-slate-700 text-white border-slate-700 shadow-md':'bg-slate-50 text-slate-500'}`}>
+                                                <input type="checkbox" className="hidden" checked={examConfig.hideKanji} onChange={(e) => {
+                                                    const checked = e.target.checked;
+                                                    // 勾選隱藏時預設開啟測驗；取消隱藏時強制關閉測驗
+                                                    setExamConfig({...examConfig, hideKanji: checked, testKanji: checked ? true : false});
+                                                }} /> 隱藏漢字
+                                            </label>
+                                            <label className={`block text-center py-2 border rounded-xl font-bold cursor-pointer transition-colors ${examConfig.hideKana?'bg-slate-700 text-white border-slate-700 shadow-md':'bg-slate-50 text-slate-500'}`}>
+                                                <input type="checkbox" className="hidden" checked={examConfig.hideKana} onChange={(e) => {
+                                                    const checked = e.target.checked;
+                                                    setExamConfig({...examConfig, hideKana: checked, testKana: checked ? true : false});
+                                                }} /> 隱藏假名
+                                            </label>
+                                            <label className={`block text-center py-2 border rounded-xl font-bold cursor-pointer transition-colors ${examConfig.hideMeaning?'bg-slate-700 text-white border-slate-700 shadow-md':'bg-slate-50 text-slate-500'}`}>
+                                                <input type="checkbox" className="hidden" checked={examConfig.hideMeaning} onChange={(e) => {
+                                                    const checked = e.target.checked;
+                                                    setExamConfig({...examConfig, hideMeaning: checked, testMeaning: checked ? true : false});
+                                                }} /> 隱藏中文
+                                            </label>
+                                        </div>
+
+                                        <p className="text-sm font-bold text-slate-500 mb-2">2. 測驗欄位 (產生下方選項)</p>
                                         <div className="grid grid-cols-3 gap-2">
-                                            <label className={`block text-center py-2 border rounded-xl font-bold cursor-pointer transition-colors ${examConfig.hideKanji?'bg-blue-600 text-white border-blue-600 shadow-md':'bg-slate-50 text-slate-500'}`}>
-                                                <input type="checkbox" className="hidden" checked={examConfig.hideKanji} onChange={(e)=>setExamConfig({...examConfig, hideKanji: e.target.checked})} /> 漢字
+                                            <label className={`block text-center py-2 border rounded-xl font-bold transition-colors ${!examConfig.hideKanji ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed' : examConfig.testKanji ? 'bg-blue-600 text-white border-blue-600 shadow-md cursor-pointer' : 'bg-slate-50 text-slate-500 cursor-pointer hover:bg-slate-100'}`}>
+                                                <input type="checkbox" className="hidden" disabled={!examConfig.hideKanji} checked={examConfig.testKanji} onChange={(e)=>setExamConfig({...examConfig, testKanji: e.target.checked})} /> 考漢字
                                             </label>
-                                            <label className={`block text-center py-2 border rounded-xl font-bold cursor-pointer transition-colors ${examConfig.hideKana?'bg-blue-600 text-white border-blue-600 shadow-md':'bg-slate-50 text-slate-500'}`}>
-                                                <input type="checkbox" className="hidden" checked={examConfig.hideKana} onChange={(e)=>setExamConfig({...examConfig, hideKana: e.target.checked})} /> 假名
+                                            <label className={`block text-center py-2 border rounded-xl font-bold transition-colors ${!examConfig.hideKana ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed' : examConfig.testKana ? 'bg-blue-600 text-white border-blue-600 shadow-md cursor-pointer' : 'bg-slate-50 text-slate-500 cursor-pointer hover:bg-slate-100'}`}>
+                                                <input type="checkbox" className="hidden" disabled={!examConfig.hideKana} checked={examConfig.testKana} onChange={(e)=>setExamConfig({...examConfig, testKana: e.target.checked})} /> 考假名
                                             </label>
-                                            <label className={`block text-center py-2 border rounded-xl font-bold cursor-pointer transition-colors ${examConfig.hideMeaning?'bg-blue-600 text-white border-blue-600 shadow-md':'bg-slate-50 text-slate-500'}`}>
-                                                <input type="checkbox" className="hidden" checked={examConfig.hideMeaning} onChange={(e)=>setExamConfig({...examConfig, hideMeaning: e.target.checked})} /> 中文
+                                            <label className={`block text-center py-2 border rounded-xl font-bold transition-colors ${!examConfig.hideMeaning ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed' : examConfig.testMeaning ? 'bg-blue-600 text-white border-blue-600 shadow-md cursor-pointer' : 'bg-slate-50 text-slate-500 cursor-pointer hover:bg-slate-100'}`}>
+                                                <input type="checkbox" className="hidden" disabled={!examConfig.hideMeaning} checked={examConfig.testMeaning} onChange={(e)=>setExamConfig({...examConfig, testMeaning: e.target.checked})} /> 考中文
                                             </label>
                                         </div>
                                     </div>
@@ -1469,10 +1507,11 @@
                                         <div className="mb-4">
                                             <div className="text-xs font-bold text-slate-400 mb-2">選擇正確的{title}</div>
                                             <div className="grid grid-cols-2 gap-2">
-                                                {options.map((opt, i) => {
-                                                    const isSelected = examAnswers[field] === opt;
-                                                    const isCorrectAns = q.word[field] === opt;
-                                                    let btnClass = "py-3 px-2 text-sm rounded-lg border font-bold transition-colors ";
+                                                {options.map((optWord, i) => {
+                                                    const optValue = optWord[field];
+                                                    const isSelected = examAnswers[field] === optValue;
+                                                    const isCorrectAns = q.word[field] === optValue;
+                                                    let btnClass = "py-3 px-2 text-sm rounded-lg border font-bold transition-all flex flex-col items-center justify-center gap-1 ";
 
                                                     if (!examSubmitted) {
                                                         btnClass += isSelected ? "bg-blue-100 border-blue-500 text-blue-700 shadow-sm" : "bg-white text-slate-600 hover:bg-slate-50";
@@ -1482,8 +1521,14 @@
                                                         else btnClass += "bg-slate-50 text-slate-400 border-slate-200 opacity-50";
                                                     }
                                                     return (
-                                                        <button key={i} disabled={examSubmitted} onClick={() => setExamAnswers({...examAnswers, [field]: opt})} className={btnClass}>
-                                                            {opt}
+                                                        <button key={i} disabled={examSubmitted} onClick={() => setExamAnswers({...examAnswers, [field]: optValue})} className={btnClass}>
+                                                            <span>{optValue}</span>
+                                                            {examSubmitted && (
+                                                                <div className={`text-[11px] font-normal opacity-90 flex items-center gap-1 ${isCorrectAns ? 'text-green-800' : 'text-slate-500'}`}>
+                                                                    <span>{optWord.meaning}</span>
+                                                                    {optWord.accent !== undefined && <span className="bg-black/10 px-1 rounded-sm text-black/60">[{optWord.accent}]</span>}
+                                                                </div>
+                                                            )}
                                                         </button>
                                                     );
                                                 })}
@@ -1492,7 +1537,7 @@
                                     );
                                 };
 
-                                const allAnswered = (!examConfig.hideKanji || examAnswers.kanji) && (!examConfig.hideKana || examAnswers.kana) && (!examConfig.hideMeaning || examAnswers.meaning);
+                                const allAnswered = (!examConfig.testKanji || examAnswers.kanji) && (!examConfig.testKana || examAnswers.kana) && (!examConfig.testMeaning || examAnswers.meaning);
 
                                 return (
                                     <div className="flex flex-col flex-1">
@@ -1541,14 +1586,15 @@
                                                     </div>
                                                     <hr className="my-4 border-slate-100" />
                                                     <div className="grid grid-cols-2 gap-3 mt-auto">
-                                                        {q.optionsKanji.map((opt, i) => {
-                                                            let btnClass = "py-5 px-2 text-xl rounded-xl border-2 font-bold transition-all shadow-sm ";
+                                                        {q.optionsKanji.map((optWord, i) => {
+                                                            const optValue = optWord.kanji;
+                                                            let btnClass = "py-5 px-2 text-xl rounded-xl border-2 font-bold transition-all shadow-sm flex flex-col items-center justify-center gap-2 ";
 
                                                             if (!examSubmitted) {
                                                                 btnClass += "bg-white text-slate-700 hover:bg-blue-50 border-slate-100 hover:border-blue-300 active:scale-95";
                                                             } else {
-                                                                const isSelected = examAnswers.listening === opt;
-                                                                const isCorrectAns = q.word.kanji === opt;
+                                                                const isSelected = examAnswers.listening === optValue;
+                                                                const isCorrectAns = q.word.kanji === optValue;
 
                                                                 if (isCorrectAns) {
                                                                     btnClass += "bg-green-100 border-green-500 text-green-700";
@@ -1560,8 +1606,14 @@
                                                             }
 
                                                             return (
-                                                                <button key={i} disabled={examSubmitted} onClick={() => handleListeningAnswer(opt)} className={btnClass}>
-                                                                    {opt}
+                                                                <button key={i} disabled={examSubmitted} onClick={() => handleListeningAnswer(optValue)} className={btnClass}>
+                                                                    <span>{optValue}</span>
+                                                                    {examSubmitted && (
+                                                                        <div className="text-sm font-normal opacity-90 flex flex-col items-center gap-1 text-slate-600">
+                                                                            <span>{optWord.meaning}</span>
+                                                                            {optWord.accent !== undefined && <span className="bg-black/10 px-1.5 rounded-sm text-black/60">[{optWord.accent}]</span>}
+                                                                        </div>
+                                                                    )}
                                                                 </button>
                                                             );
                                                         })}
