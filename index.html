@@ -209,7 +209,8 @@
             const [testedWords, setTestedWords] = useState([]); // 追蹤本次考試作答紀錄
             const [showSummary, setShowSummary] = useState(false); // 控制是否顯示成績總結
             const [timeLeft, setTimeLeft] = useState(10); // 聽力測驗 10 秒計時器
-            const examTimeoutRef = React.useRef(null); // 👉 新增：控制 2 秒延遲的引用
+            const examTimeoutRef = React.useRef(null); // 控制 2 秒延遲的引用
+            const [isAutoPaused, setIsAutoPaused] = useState(false); // 👉 新增：控制聽力測驗是否暫停自動跳題
 
             const currentVocabList = useMemo(() => {
                 if (!window.VOCAB_DB) return [];
@@ -616,20 +617,20 @@
 
             // --- 聽力測驗 10 秒計時器 ---
             const handleTimeOut = useCallback(() => {
-                if (examSubmitted) return; // 已經答題就不要再觸發超時
+                if (examSubmitted) return;
                 const q = examQuestions[examIndex];
 
                 setExamSubmitted(true);
-                setExamAnswers({ listening: null }); // 標記為：超時未選
+                setExamAnswers({ listening: null });
 
-                updateStats(q.word.id, false); // 超時算錯
+                updateStats(q.word.id, false);
                 setTestedWords(prev => [...prev, { word: q.word, isCorrect: false }]);
                 stopCurrentAudio();
 
-                // 停留 2 秒公佈正確答案後，再進入下一題
                 examTimeoutRef.current = setTimeout(() => {
                     setExamSubmitted(false);
                     setExamAnswers({});
+                    setIsAutoPaused(false); // 👉 重置暫停狀態
                     if (examIndex + 1 < examQuestions.length) {
                         setExamIndex(prev => prev + 1);
                         setTimeLeft(10);
@@ -641,7 +642,7 @@
 
             useEffect(() => {
                 if (currentTab === 'exam' && examConfig.type === 'listening' && !showSummary) {
-                    if (examSubmitted) return; // 👉 新增：答題後暫停計時器，給予 2 秒觀看解答的時間
+                    if (examSubmitted) return;
                     if (timeLeft <= 0) {
                         handleTimeOut();
                         return;
@@ -652,13 +653,13 @@
             }, [timeLeft, currentTab, examConfig.type, showSummary, handleTimeOut, examSubmitted]);
 
             const finishExam = () => {
-                if (examTimeoutRef.current) clearTimeout(examTimeoutRef.current); // 清除可能殘留的 2 秒跳轉
+                if (examTimeoutRef.current) clearTimeout(examTimeoutRef.current);
                 stopCurrentAudio();
                 setShowSummary(true);
             };
 
             const startExam = () => {
-                getAudioCtx(); // 👉 同步喚醒音效引擎 (解決你剛剛遇到的 ReferenceError)
+                getAudioCtx();
                 if (examTimeoutRef.current) clearTimeout(examTimeoutRef.current);
 
                 if (examConfig.type === 'standard') {
@@ -676,7 +677,6 @@
 
                 let pool = [...currentVocabList];
 
-                // 1. 先進行過濾
                 if (examConfig.mode === 'mistakes') {
                     pool = pool.filter(v => ((stats[v.id] && stats[v.id].wrong) || 0) > 0);
                     if (pool.length < 4) { alert("答錯題目太少，無法進行錯題模式！(至少需4題)"); return; }
@@ -688,16 +688,13 @@
                     if (pool.length < 4) { alert("已學習單字太少！請先到學習模式瀏覽單字 (至少需4題)"); return; }
                 }
 
-                // 2. 再進行排序或真隨機洗牌
                 if (examConfig.mode === 'weighted') {
-                    // 原本的加權演算法保留
                     pool.sort((a, b) => {
                         const rateA = ((stats[a.id] && stats[a.id].wrong) || 0) / (((stats[a.id] && stats[a.id].correct) || 0) + ((stats[a.id] && stats[a.id].wrong) || 0) + 1);
                         const rateB = ((stats[b.id] && stats[b.id].wrong) || 0) / (((stats[b.id] && stats[b.id].correct) || 0) + ((stats[b.id] && stats[b.id].wrong) || 0) + 1);
                         return (Math.random() * (1 - rateA)) - (Math.random() * (1 - rateB));
                     });
                 } else {
-                    // 👉 修正：套用 Fisher-Yates Shuffle，確保完全隨機且不遺漏
                     for (let i = pool.length - 1; i > 0; i--) {
                         const j = Math.floor(Math.random() * (i + 1));
                         [pool[i], pool[j]] = [pool[j], pool[i]];
@@ -705,19 +702,17 @@
                 }
 
                 const generateOptions = (correctWord, field) => {
-                    const options = [correctWord]; // 改為放入完整單字物件
-                    const usedValues = new Set([correctWord[field]]); // 用來檢查字串是否重複
+                    const options = [correctWord];
+                    const usedValues = new Set([correctWord[field]]);
 
                     while(options.length < 4 && options.length < currentVocabList.length) {
                         const randomWord = currentVocabList[Math.floor(Math.random() * currentVocabList.length)];
-                        // 確保選項的字串不會跟已有的選項重複
                         if (!usedValues.has(randomWord[field])) {
                             options.push(randomWord);
                             usedValues.add(randomWord[field]);
                         }
                     }
 
-                    // 👉 修正：選項也改用 Fisher-Yates 洗牌，避免正確答案偏向特定位置
                     for (let i = options.length - 1; i > 0; i--) {
                         const j = Math.floor(Math.random() * (i + 1));
                         [options[i], options[j]] = [options[j], options[i]];
@@ -727,9 +722,10 @@
 
                 const questions = pool.map(word => ({
                     word,
-                    optionsKanji: (examConfig.type === 'listening' || examConfig.testKanji) ? generateOptions(word, 'kanji') : null,
+                    // 👉 修正：聽力測驗取消產生漢字選項，改為產生中文(Meaning)選項
+                    optionsKanji: (examConfig.type !== 'listening' && examConfig.testKanji) ? generateOptions(word, 'kanji') : null,
                     optionsKana: (examConfig.type !== 'listening' && examConfig.testKana) ? generateOptions(word, 'kana') : null,
-                    optionsMeaning: (examConfig.type !== 'listening' && examConfig.testMeaning) ? generateOptions(word, 'meaning') : null,
+                    optionsMeaning: (examConfig.type === 'listening' || examConfig.testMeaning) ? generateOptions(word, 'meaning') : null,
                 }));
 
                 setExamQuestions(questions);
@@ -739,6 +735,7 @@
                 setTestedWords([]);
                 setShowSummary(false);
                 setTimeLeft(10);
+                setIsAutoPaused(false); // 👉 重置暫停狀態
                 setCurrentTab('exam');
             };
 
@@ -758,21 +755,21 @@
             };
 
             const handleListeningAnswer = (opt) => {
-                if (examSubmitted) return; // 防止狂點
+                if (examSubmitted) return;
                 const q = examQuestions[examIndex];
-                const isCorrect = (q.word.kanji === opt);
+                const isCorrect = (q.word.meaning === opt); // 👉 修正：聽力測驗改為比對中文
 
                 setExamSubmitted(true);
-                setExamAnswers({ listening: opt }); // 記錄考生選了什麼
+                setExamAnswers({ listening: opt });
 
                 updateStats(q.word.id, isCorrect);
                 setTestedWords(prev => [...prev, { word: q.word, isCorrect }]);
                 stopCurrentAudio();
 
-                // 停留 2 秒公佈解答後，再進入下一題
                 examTimeoutRef.current = setTimeout(() => {
                     setExamSubmitted(false);
                     setExamAnswers({});
+                    setIsAutoPaused(false); // 👉 重置暫停狀態
                     if (examIndex + 1 < examQuestions.length) {
                         setExamIndex(prev => prev + 1);
                         setTimeLeft(10);
@@ -995,7 +992,7 @@
                         )}
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.7.1</span></h1>
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.8</span></h1>
                                 <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
                                     <i className="fas fa-download mr-1"></i>匯出紀錄
                                 </button>
@@ -1503,6 +1500,12 @@
 
                                 const renderOptions = (title, field, options) => {
                                     if (!options) return null;
+
+                                    let bottomField = '';
+                                    if (examConfig.testMeaning) bottomField = 'meaning';
+                                    else if (examConfig.testKana) bottomField = 'kana';
+                                    else if (examConfig.testKanji) bottomField = 'kanji';
+
                                     return (
                                         <div className="mb-4">
                                             <div className="text-xs font-bold text-slate-400 mb-2">選擇正確的{title}</div>
@@ -1511,25 +1514,60 @@
                                                     const optValue = optWord[field];
                                                     const isSelected = examAnswers[field] === optValue;
                                                     const isCorrectAns = q.word[field] === optValue;
-                                                    let btnClass = "py-3 px-2 text-sm rounded-lg border font-bold transition-all flex flex-col items-center justify-center gap-1 ";
+                                                    let btnClass = "py-3 px-2 text-sm rounded-lg border font-bold transition-all flex flex-col items-center justify-center gap-1 relative ";
 
                                                     if (!examSubmitted) {
-                                                        btnClass += isSelected ? "bg-blue-100 border-blue-500 text-blue-700 shadow-sm" : "bg-white text-slate-600 hover:bg-slate-50";
+                                                        btnClass += isSelected ? "bg-blue-100 border-blue-500 text-blue-700 shadow-sm cursor-pointer" : "bg-white text-slate-600 hover:bg-slate-50 cursor-pointer";
                                                     } else {
                                                         if (isCorrectAns) btnClass += "bg-green-100 border-green-500 text-green-700";
                                                         else if (isSelected && !isCorrectAns) btnClass += "bg-red-100 border-red-500 text-red-700 line-through";
                                                         else btnClass += "bg-slate-50 text-slate-400 border-slate-200 opacity-50";
                                                     }
+
+                                                    const isBottomField = (field === bottomField);
+
                                                     return (
-                                                        <button key={i} disabled={examSubmitted} onClick={() => setExamAnswers({...examAnswers, [field]: optValue})} className={btnClass}>
-                                                            <span>{optValue}</span>
-                                                            {examSubmitted && (
-                                                                <div className={`text-[11px] font-normal opacity-90 flex items-center gap-1 ${isCorrectAns ? 'text-green-800' : 'text-slate-500'}`}>
-                                                                    <span>{optWord.meaning}</span>
-                                                                    {optWord.accent !== undefined && <span className="bg-black/10 px-1 rounded-sm text-black/60">[{optWord.accent}]</span>}
+                                                        <div key={i} onClick={() => !examSubmitted && setExamAnswers({...examAnswers, [field]: optValue})} className={btnClass}>
+                                                            <span className="flex items-center justify-center gap-1">
+                                                                {optValue}
+                                                                {/* 👉 修正：若該選項就是平假名，在後方直接補上重音標示 */}
+                                                                {field === 'kana' && optWord.accent !== undefined && (
+                                                                    <span className="bg-black/10 px-1 rounded-sm text-black/60 text-[11px] leading-none">[{optWord.accent}]</span>
+                                                                )}
+                                                            </span>
+
+                                                            {examSubmitted && isBottomField && (
+                                                                <div className={`text-[11px] font-normal opacity-90 flex flex-col items-center gap-1 mt-1 ${isCorrectAns ? 'text-green-800' : 'text-slate-500'}`}>
+                                                                    {field === 'kanji' && (
+                                                                        <React.Fragment>
+                                                                            <span className="flex items-center gap-1">{optWord.kana} {optWord.accent !== undefined && <span className="bg-black/10 px-1 rounded-sm text-black/60">[{optWord.accent}]</span>}</span>
+                                                                            <span>{optWord.meaning}</span>
+                                                                        </React.Fragment>
+                                                                    )}
+                                                                    {field === 'kana' && (
+                                                                        <React.Fragment>
+                                                                            <span>{optWord.kanji}</span>
+                                                                            <span>{optWord.meaning}</span>
+                                                                        </React.Fragment>
+                                                                    )}
+                                                                    {field === 'meaning' && (
+                                                                        <React.Fragment>
+                                                                            <span>{optWord.kanji}</span>
+                                                                            <span className="flex items-center gap-1">{optWord.kana} {optWord.accent !== undefined && <span className="bg-black/10 px-1 rounded-sm text-black/60">[{optWord.accent}]</span>}</span>
+                                                                        </React.Fragment>
+                                                                    )}
                                                                 </div>
                                                             )}
-                                                        </button>
+
+                                                            {examSubmitted && isBottomField && (
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); speak(optWord, false); }}
+                                                                    className="absolute top-2 right-2 text-slate-400 hover:text-blue-500 transition-colors"
+                                                                >
+                                                                    <i className="fas fa-volume-up text-sm"></i>
+                                                                </button>
+                                                            )}
+                                                        </div>
                                                     );
                                                 })}
                                             </div>
@@ -1565,21 +1603,26 @@
                                         <div className="bg-white rounded-2xl shadow-sm p-6 mb-4 border border-slate-100 flex-1 flex flex-col">
                                             {examConfig.type === 'standard' ? (
                                                 <React.Fragment>
-                                                    <div className="text-center mb-6">
+                                                    <div className="text-center mb-6 relative">
                                                         <div className="text-xs font-bold text-blue-400 mb-2">請看題</div>
-                                                        {!examConfig.hideKanji && <div className="text-4xl font-bold mb-2">{q.word.kanji}</div>}
-                                                        {!examConfig.hideKana && <div className="text-2xl text-slate-600 mb-2">{q.word.kana}</div>}
-                                                        {!examConfig.hideMeaning && <div className="text-xl text-blue-600 font-bold">{q.word.meaning}</div>}
+                                                        {(!examConfig.hideKanji || examSubmitted) && <div className="text-4xl font-bold mb-2">{q.word.kanji}</div>}
+                                                        {(!examConfig.hideKana || examSubmitted) && <div className="text-2xl text-slate-600 mb-2">{q.word.kana}</div>}
+                                                        {(!examConfig.hideMeaning || examSubmitted) && <div className="text-xl text-blue-600 font-bold">{q.word.meaning}</div>}
                                                     </div>
                                                     <hr className="my-4 border-slate-100" />
                                                     {renderOptions("漢字", "kanji", q.optionsKanji)}
                                                     {renderOptions("假名", "kana", q.optionsKana)}
                                                     {renderOptions("中文", "meaning", q.optionsMeaning)}
 
-                                                    {/* 👉 新增：標準測驗答題後顯示正確答案例句 */}
                                                     {examSubmitted && q.word.example && (
                                                         <div className="mt-2 text-left bg-blue-50/50 p-3 rounded-lg text-sm border border-blue-100">
                                                             <div className="flex items-center mb-1">
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); speak(q.word, true); }}
+                                                                    className="mr-2 text-slate-400 hover:text-blue-500 transition-colors"
+                                                                >
+                                                                    <i className="fas fa-volume-up text-sm"></i>
+                                                                </button>
                                                                 <span className="font-bold text-blue-500 mr-2">例句</span>
                                                                 <span className="text-slate-700">{q.word.example.split(' (')[0]}</span>
                                                             </div>
@@ -1596,20 +1639,21 @@
                                                     <div className="text-center py-6 mb-6">
                                                         <i className="fas fa-headphones-alt text-6xl text-blue-500 mb-6 animate-pulse drop-shadow-md"></i>
                                                         <div className="text-sm font-bold text-slate-500 bg-slate-50 inline-block px-4 py-2 rounded-full border border-slate-100">
-                                                            請仔細聽發音，並選出正確的漢字
+                                                            請仔細聽發音，並選出正確的中文意思 {/* 👉 修正文字提示 */}
                                                         </div>
                                                     </div>
                                                     <hr className="my-4 border-slate-100" />
                                                     <div className="grid grid-cols-2 gap-3 mt-auto">
-                                                        {q.optionsKanji.map((optWord, i) => {
-                                                            const optValue = optWord.kanji;
-                                                            let btnClass = "py-5 px-2 text-xl rounded-xl border-2 font-bold transition-all shadow-sm flex flex-col items-center justify-center gap-2 ";
+                                                        {/* 👉 修正：渲染中文 (Meaning) 選項 */}
+                                                        {q.optionsMeaning.map((optWord, i) => {
+                                                            const optValue = optWord.meaning;
+                                                            let btnClass = "py-5 px-2 text-lg rounded-xl border-2 font-bold transition-all shadow-sm flex flex-col items-center justify-center gap-2 relative ";
 
                                                             if (!examSubmitted) {
-                                                                btnClass += "bg-white text-slate-700 hover:bg-blue-50 border-slate-100 hover:border-blue-300 active:scale-95";
+                                                                btnClass += "bg-white text-slate-700 hover:bg-blue-50 border-slate-100 hover:border-blue-300 active:scale-95 cursor-pointer";
                                                             } else {
                                                                 const isSelected = examAnswers.listening === optValue;
-                                                                const isCorrectAns = q.word.kanji === optValue;
+                                                                const isCorrectAns = q.word.meaning === optValue;
 
                                                                 if (isCorrectAns) {
                                                                     btnClass += "bg-green-100 border-green-500 text-green-700";
@@ -1621,23 +1665,38 @@
                                                             }
 
                                                             return (
-                                                                <button key={i} disabled={examSubmitted} onClick={() => handleListeningAnswer(optValue)} className={btnClass}>
-                                                                    <span>{optValue}</span>
+                                                                <div key={i} onClick={() => !examSubmitted && handleListeningAnswer(optValue)} className={btnClass}>
+                                                                    <span className="text-center">{optValue}</span>
+
                                                                     {examSubmitted && (
-                                                                        <div className="text-sm font-normal opacity-90 flex flex-col items-center gap-1 text-slate-600">
-                                                                            <span>{optWord.meaning}</span>
-                                                                            {optWord.accent !== undefined && <span className="bg-black/10 px-1.5 rounded-sm text-black/60">[{optWord.accent}]</span>}
+                                                                        <div className="text-sm font-normal opacity-90 flex flex-col items-center gap-1 text-slate-600 mt-1">
+                                                                            <span>{optWord.kanji}</span>
+                                                                            <span className="flex items-center gap-1">{optWord.kana} {optWord.accent !== undefined && <span className="bg-black/10 px-1.5 rounded-sm text-black/60">[{optWord.accent}]</span>}</span>
                                                                         </div>
                                                                     )}
-                                                                </button>
+
+                                                                    {examSubmitted && (
+                                                                        <button
+                                                                            onClick={(e) => { e.stopPropagation(); speak(optWord, false); }}
+                                                                            className="absolute top-2 right-2 text-slate-400 hover:text-blue-500 transition-colors"
+                                                                        >
+                                                                            <i className="fas fa-volume-up text-sm"></i>
+                                                                        </button>
+                                                                    )}
+                                                                </div>
                                                             );
                                                         })}
                                                     </div>
 
-                                                    {/* 👉 新增：聽力測驗答題後顯示正確答案例句 */}
                                                     {examSubmitted && q.word.example && (
                                                         <div className="mt-4 text-left bg-blue-50/50 p-3 rounded-lg text-sm border border-blue-100">
                                                             <div className="flex items-center mb-1">
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); speak(q.word, true); }}
+                                                                    className="mr-2 text-slate-400 hover:text-blue-500 transition-colors"
+                                                                >
+                                                                    <i className="fas fa-volume-up text-sm"></i>
+                                                                </button>
                                                                 <span className="font-bold text-blue-500 mr-2">例句</span>
                                                                 <span className="text-slate-700">{q.word.example.split(' (')[0]}</span>
                                                             </div>
@@ -1645,6 +1704,41 @@
                                                                 <div className="text-slate-500 text-xs ml-9">
                                                                     ({q.word.example.split('(')[1]}
                                                                 </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+
+                                                    {/* 👉 新增：聽力測驗暫停自動跳轉的按鈕 */}
+                                                    {examSubmitted && (
+                                                        <div className="mt-4 flex gap-2 w-full">
+                                                            {!isAutoPaused ? (
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        if (examTimeoutRef.current) clearTimeout(examTimeoutRef.current);
+                                                                        setIsAutoPaused(true);
+                                                                    }}
+                                                                    className="flex-1 py-3 bg-amber-50 text-amber-600 rounded-xl font-bold border border-amber-200 hover:bg-amber-100 active:scale-95 transition-all shadow-sm"
+                                                                >
+                                                                    <i className="fas fa-pause mr-1"></i> 暫停自動跳題
+                                                                </button>
+                                                            ) : (
+                                                                <button
+                                                                    onClick={() => {
+                                                                        setExamAnswers({});
+                                                                        setExamSubmitted(false);
+                                                                        setIsAutoPaused(false);
+                                                                        if (examIndex + 1 < examQuestions.length) {
+                                                                            setExamIndex(prev => prev + 1);
+                                                                            setTimeLeft(10);
+                                                                        } else {
+                                                                            finishExam();
+                                                                        }
+                                                                    }}
+                                                                    className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold shadow-lg hover:bg-blue-700 active:scale-95 transition-all"
+                                                                >
+                                                                    {examIndex + 1 < examQuestions.length ? "下一題" : "查看總結"}
+                                                                </button>
                                                             )}
                                                         </div>
                                                     )}
