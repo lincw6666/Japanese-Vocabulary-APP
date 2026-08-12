@@ -751,25 +751,38 @@
                     if (prev.find(p => p.word.id === q.word.id)) return prev;
                     return [...prev, { word: q.word, isCorrect }];
                 });
+                // 👉 測驗過後，自動將該單字加入「已學習」清單
+                setViewedIds(prev => {
+                    const next = new Set(prev);
+                    next.add(q.word.id);
+                    return next;
+                });
                 setExamSubmitted(true);
             };
 
             const handleListeningAnswer = (opt) => {
                 if (examSubmitted) return;
                 const q = examQuestions[examIndex];
-                const isCorrect = (q.word.meaning === opt); // 👉 修正：聽力測驗改為比對中文
+                const isCorrect = (q.word.meaning === opt);
 
                 setExamSubmitted(true);
                 setExamAnswers({ listening: opt });
 
                 updateStats(q.word.id, isCorrect);
                 setTestedWords(prev => [...prev, { word: q.word, isCorrect }]);
+
+                // 👉 測驗過後，自動將該單字加入「已學習」清單
+                setViewedIds(prev => {
+                    const next = new Set(prev);
+                    next.add(q.word.id);
+                    return next;
+                });
                 stopCurrentAudio();
 
                 examTimeoutRef.current = setTimeout(() => {
                     setExamSubmitted(false);
                     setExamAnswers({});
-                    setIsAutoPaused(false); // 👉 重置暫停狀態
+                    setIsAutoPaused(false);
                     if (examIndex + 1 < examQuestions.length) {
                         setExamIndex(prev => prev + 1);
                         setTimeLeft(10);
@@ -992,7 +1005,7 @@
                         )}
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.8</span></h1>
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.9</span></h1>
                                 <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
                                     <i className="fas fa-download mr-1"></i>匯出紀錄
                                 </button>
@@ -1600,11 +1613,18 @@
                                             </div>
                                         )}
 
-                                        <div className="bg-white rounded-2xl shadow-sm p-6 mb-4 border border-slate-100 flex-1 flex flex-col">
+                                        <div className="bg-white rounded-2xl shadow-sm p-6 mb-4 border border-slate-100 flex-1 flex flex-col relative">
                                             {examConfig.type === 'standard' ? (
                                                 <React.Fragment>
                                                     <div className="text-center mb-6 relative">
-                                                        <div className="text-xs font-bold text-blue-400 mb-2">請看題</div>
+                                                        {/* 👉 新增：考試中將單字加入我的最愛 (放右上角) */}
+                                                        <div className="absolute top-0 right-0 z-10">
+                                                            <button onClick={() => toggleFavorite(q.word.id)} className="text-2xl hover:scale-110 active:scale-95 transition-transform">
+                                                                {favoriteIds.has(q.word.id) ? <i className="fas fa-heart text-red-500 drop-shadow-sm"></i> : <i className="far fa-heart text-slate-300 hover:text-red-400"></i>}
+                                                            </button>
+                                                        </div>
+
+                                                        <div className="text-xs font-bold text-blue-400 mb-2 mt-2">請看題</div>
                                                         {(!examConfig.hideKanji || examSubmitted) && <div className="text-4xl font-bold mb-2">{q.word.kanji}</div>}
                                                         {(!examConfig.hideKana || examSubmitted) && <div className="text-2xl text-slate-600 mb-2">{q.word.kana}</div>}
                                                         {(!examConfig.hideMeaning || examSubmitted) && <div className="text-xl text-blue-600 font-bold">{q.word.meaning}</div>}
@@ -1636,15 +1656,56 @@
                                                 </React.Fragment>
                                             ) : (
                                                 <React.Fragment>
-                                                    <div className="text-center py-6 mb-6">
-                                                        <i className="fas fa-headphones-alt text-6xl text-blue-500 mb-6 animate-pulse drop-shadow-md"></i>
+                                                    <div className="text-center py-6 mb-6 relative flex flex-col items-center">
+                                                        {/* 👉 新增：考試中將單字加入我的最愛 (放左上角) */}
+                                                        <div className="absolute top-0 left-0 z-10">
+                                                            <button onClick={() => toggleFavorite(q.word.id)} className="text-2xl hover:scale-110 active:scale-95 transition-transform">
+                                                                {favoriteIds.has(q.word.id) ? <i className="fas fa-heart text-red-500 drop-shadow-sm"></i> : <i className="far fa-heart text-slate-300 hover:text-red-400"></i>}
+                                                            </button>
+                                                        </div>
+
+                                                        {/* 👉 移動：聽力測驗暫停自動跳轉的按鈕 (移至右上角) */}
+                                                        {examSubmitted && (
+                                                            <div className="absolute top-0 right-0 z-10 flex gap-2">
+                                                                {!isAutoPaused ? (
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            if (examTimeoutRef.current) clearTimeout(examTimeoutRef.current);
+                                                                            setIsAutoPaused(true);
+                                                                        }}
+                                                                        className="px-3 py-1.5 bg-amber-50 text-amber-600 rounded-full font-bold border border-amber-200 hover:bg-amber-100 active:scale-95 transition-all shadow-sm text-xs flex items-center"
+                                                                    >
+                                                                        <i className="fas fa-pause mr-1"></i> 暫停跳題
+                                                                    </button>
+                                                                ) : (
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            setExamAnswers({});
+                                                                            setExamSubmitted(false);
+                                                                            setIsAutoPaused(false);
+                                                                            if (examIndex + 1 < examQuestions.length) {
+                                                                                setExamIndex(prev => prev + 1);
+                                                                                setTimeLeft(10);
+                                                                            } else {
+                                                                                finishExam();
+                                                                            }
+                                                                        }}
+                                                                        className="px-3 py-1.5 bg-blue-600 text-white rounded-full font-bold shadow-sm hover:bg-blue-700 active:scale-95 transition-all text-xs flex items-center"
+                                                                    >
+                                                                        {examIndex + 1 < examQuestions.length ? "下一題" : "看總結"} <i className="fas fa-chevron-right ml-1"></i>
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        )}
+
+                                                        <i className="fas fa-headphones-alt text-6xl text-blue-500 mb-6 mt-4 animate-pulse drop-shadow-md"></i>
                                                         <div className="text-sm font-bold text-slate-500 bg-slate-50 inline-block px-4 py-2 rounded-full border border-slate-100">
-                                                            請仔細聽發音，並選出正確的中文意思 {/* 👉 修正文字提示 */}
+                                                            請仔細聽發音，並選出正確的中文意思
                                                         </div>
                                                     </div>
                                                     <hr className="my-4 border-slate-100" />
                                                     <div className="grid grid-cols-2 gap-3 mt-auto">
-                                                        {/* 👉 修正：渲染中文 (Meaning) 選項 */}
                                                         {q.optionsMeaning.map((optWord, i) => {
                                                             const optValue = optWord.meaning;
                                                             let btnClass = "py-5 px-2 text-lg rounded-xl border-2 font-bold transition-all shadow-sm flex flex-col items-center justify-center gap-2 relative ";
@@ -1704,41 +1765,6 @@
                                                                 <div className="text-slate-500 text-xs ml-9">
                                                                     ({q.word.example.split('(')[1]}
                                                                 </div>
-                                                            )}
-                                                        </div>
-                                                    )}
-
-                                                    {/* 👉 新增：聽力測驗暫停自動跳轉的按鈕 */}
-                                                    {examSubmitted && (
-                                                        <div className="mt-4 flex gap-2 w-full">
-                                                            {!isAutoPaused ? (
-                                                                <button
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        if (examTimeoutRef.current) clearTimeout(examTimeoutRef.current);
-                                                                        setIsAutoPaused(true);
-                                                                    }}
-                                                                    className="flex-1 py-3 bg-amber-50 text-amber-600 rounded-xl font-bold border border-amber-200 hover:bg-amber-100 active:scale-95 transition-all shadow-sm"
-                                                                >
-                                                                    <i className="fas fa-pause mr-1"></i> 暫停自動跳題
-                                                                </button>
-                                                            ) : (
-                                                                <button
-                                                                    onClick={() => {
-                                                                        setExamAnswers({});
-                                                                        setExamSubmitted(false);
-                                                                        setIsAutoPaused(false);
-                                                                        if (examIndex + 1 < examQuestions.length) {
-                                                                            setExamIndex(prev => prev + 1);
-                                                                            setTimeLeft(10);
-                                                                        } else {
-                                                                            finishExam();
-                                                                        }
-                                                                    }}
-                                                                    className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold shadow-lg hover:bg-blue-700 active:scale-95 transition-all"
-                                                                >
-                                                                    {examIndex + 1 < examQuestions.length ? "下一題" : "查看總結"}
-                                                                </button>
                                                             )}
                                                         </div>
                                                     )}
