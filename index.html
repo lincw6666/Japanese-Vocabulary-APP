@@ -1451,9 +1451,19 @@
 
                             {currentTab === 'exam' && showSummary && (() => {
                                 const sortedWords = [...testedWords].sort((a, b) => {
-                                    const wrongA = (stats[a.word.id] && stats[a.word.id].wrong) || 0;
-                                    const wrongB = (stats[b.word.id] && stats[b.word.id].wrong) || 0;
-                                    return wrongB - wrongA; // 錯誤次數由大到小
+                                    const sA = stats[a.word.id] || { history: [], wrong: 0 };
+                                    const sB = stats[b.word.id] || { history: [], wrong: 0 };
+
+                                    // 計算近 10 次的錯誤次數 (history 陣列裡 false 的數量)
+                                    const recentWrongA = sA.history ? sA.history.filter(res => !res).length : 0;
+                                    const recentWrongB = sB.history ? sB.history.filter(res => !res).length : 0;
+
+                                    // 優先以「近 10 次錯誤次數」由大到小排序
+                                    if (recentWrongB !== recentWrongA) {
+                                        return recentWrongB - recentWrongA;
+                                    }
+                                    // 若近 10 次錯誤次數相同，則以「有史以來總錯誤次數」作為次要排序條件
+                                    return (sB.wrong || 0) - (sA.wrong || 0);
                                 });
 
                                 return (
