@@ -662,7 +662,7 @@
                 getAudioCtx();
                 if (examTimeoutRef.current) clearTimeout(examTimeoutRef.current);
 
-                if (examConfig.type === 'standard') {
+                if (examConfig.type === 'standard' || examConfig.type === 'typing') {
                     const hiddenCount = [examConfig.hideKanji, examConfig.hideKana, examConfig.hideMeaning].filter(Boolean).length;
                     const testCount = [examConfig.testKanji, examConfig.testKana, examConfig.testMeaning].filter(Boolean).length;
                     if (hiddenCount === 0 || hiddenCount === 3) {
@@ -747,9 +747,18 @@
             const submitStandardAnswer = () => {
                 const q = examQuestions[examIndex];
                 let isCorrect = true;
-                if (examConfig.testKanji && examAnswers.kanji !== q.word.kanji) isCorrect = false;
-                if (examConfig.testKana && examAnswers.kana !== q.word.kana) isCorrect = false;
-                if (examConfig.testMeaning && examAnswers.meaning !== q.word.meaning) isCorrect = false;
+
+                const checkAns = (field, correctVal) => {
+                    if (examConfig.type === 'typing') {
+                        return (examAnswers[field] || '').trim() === correctVal;
+                    } else {
+                        return examAnswers[field] === correctVal;
+                    }
+                };
+
+                if (examConfig.testKanji && !checkAns('kanji', q.word.kanji)) isCorrect = false;
+                if (examConfig.testKana && !checkAns('kana', q.word.kana)) isCorrect = false;
+                if (examConfig.testMeaning && !checkAns('meaning', q.word.meaning)) isCorrect = false;
 
                 updateStats(q.word.id, isCorrect);
                 setTestedWords(prev => {
@@ -1056,7 +1065,7 @@
                         )}
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.12</span></h1>
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.13</span></h1>
                                 <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
                                     <i className="fas fa-download mr-1"></i>匯出紀錄
                                 </button>
@@ -1430,12 +1439,15 @@
 
                                     <div className="mb-6">
                                         <p className="text-sm font-bold text-slate-500 mb-2">測驗類型</p>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <button onClick={() => setExamConfig({ ...examConfig, type: 'standard' })} className={`py-3 rounded-xl font-bold border transition-colors ${examConfig.type === 'standard' ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}>
-                                                標準測驗
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <button onClick={() => setExamConfig({ ...examConfig, type: 'standard' })} className={`py-3 rounded-xl text-sm font-bold border transition-colors ${examConfig.type === 'standard' ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}>
+                                                選擇測驗
                                             </button>
-                                            <button onClick={() => setExamConfig({ ...examConfig, type: 'listening' })} className={`py-3 rounded-xl font-bold border transition-colors ${examConfig.type === 'listening' ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}>
-                                                聽力測驗 <span className="text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded-full ml-1">10s</span>
+                                            <button onClick={() => setExamConfig({ ...examConfig, type: 'typing', testMeaning: false })} className={`py-3 rounded-xl text-sm font-bold border transition-colors ${examConfig.type === 'typing' ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}>
+                                                打字測驗
+                                            </button>
+                                            <button onClick={() => setExamConfig({ ...examConfig, type: 'listening' })} className={`py-3 rounded-xl text-sm font-bold border transition-colors flex items-center justify-center ${examConfig.type === 'listening' ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}>
+                                                聽力 <span className="text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded-full ml-1">10s</span>
                                             </button>
                                         </div>
                                     </div>
@@ -1472,8 +1484,8 @@
                                             <label className={`block text-center py-2 border rounded-xl font-bold transition-colors ${!examConfig.hideKana ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed' : examConfig.testKana ? 'bg-blue-600 text-white border-blue-600 shadow-md cursor-pointer' : 'bg-slate-50 text-slate-500 cursor-pointer hover:bg-slate-100'}`}>
                                                 <input type="checkbox" className="hidden" disabled={!examConfig.hideKana} checked={examConfig.testKana} onChange={(e)=>setExamConfig({...examConfig, testKana: e.target.checked})} /> 考假名
                                             </label>
-                                            <label className={`block text-center py-2 border rounded-xl font-bold transition-colors ${!examConfig.hideMeaning ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed' : examConfig.testMeaning ? 'bg-blue-600 text-white border-blue-600 shadow-md cursor-pointer' : 'bg-slate-50 text-slate-500 cursor-pointer hover:bg-slate-100'}`}>
-                                                <input type="checkbox" className="hidden" disabled={!examConfig.hideMeaning} checked={examConfig.testMeaning} onChange={(e)=>setExamConfig({...examConfig, testMeaning: e.target.checked})} /> 考中文
+                                            <label className={`block text-center py-2 border rounded-xl font-bold transition-colors ${(!examConfig.hideMeaning || examConfig.type === 'typing') ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed' : examConfig.testMeaning ? 'bg-blue-600 text-white border-blue-600 shadow-md cursor-pointer' : 'bg-slate-50 text-slate-500 cursor-pointer hover:bg-slate-100'}`}>
+                                                <input type="checkbox" className="hidden" disabled={!examConfig.hideMeaning || examConfig.type === 'typing'} checked={examConfig.testMeaning && examConfig.type !== 'typing'} onChange={(e)=>setExamConfig({...examConfig, testMeaning: e.target.checked})} /> 考中文
                                             </label>
                                         </div>
                                     </div>
@@ -1649,7 +1661,15 @@
                                     );
                                 };
 
-                                const allAnswered = (!examConfig.testKanji || examAnswers.kanji) && (!examConfig.testKana || examAnswers.kana) && (!examConfig.testMeaning || examAnswers.meaning);
+                                const checkHasValue = (field) => {
+                                    if (examConfig.type === 'typing') {
+                                        return examAnswers[field] && examAnswers[field].trim() !== '';
+                                    }
+                                    return !!examAnswers[field];
+                                };
+                                const allAnswered = (!examConfig.testKanji || checkHasValue('kanji')) &&
+                                                    (!examConfig.testKana || checkHasValue('kana')) &&
+                                                    (!examConfig.testMeaning || checkHasValue('meaning'));
 
                                 return (
                                     <div className="flex flex-col flex-1">
@@ -1675,7 +1695,7 @@
                                         )}
 
                                         <div className="bg-white rounded-2xl shadow-sm p-6 mb-4 border border-slate-100 flex-1 flex flex-col relative">
-                                            {examConfig.type === 'standard' ? (
+                                            {examConfig.type === 'standard' || examConfig.type === 'typing' ? (
                                                 <React.Fragment>
                                                     <div className="text-center mb-6 relative">
                                                         {/* 👉 新增：考試中將單字加入我的最愛 (放右上角) */}
@@ -1691,9 +1711,45 @@
                                                         {(!examConfig.hideMeaning || examSubmitted) && <div className="text-xl text-blue-600 font-bold">{q.word.meaning}</div>}
                                                     </div>
                                                     <hr className="my-4 border-slate-100" />
-                                                    {renderOptions("漢字", "kanji", q.optionsKanji)}
-                                                    {renderOptions("假名", "kana", q.optionsKana)}
-                                                    {renderOptions("中文", "meaning", q.optionsMeaning)}
+
+                                                    {examConfig.type === 'standard' ? (
+                                                        <React.Fragment>
+                                                            {renderOptions("漢字", "kanji", q.optionsKanji)}
+                                                            {renderOptions("假名", "kana", q.optionsKana)}
+                                                            {renderOptions("中文", "meaning", q.optionsMeaning)}
+                                                        </React.Fragment>
+                                                    ) : (
+                                                        <div className="flex flex-col gap-4">
+                                                            {['kanji', 'kana', 'meaning'].map(field => {
+                                                                if (field === 'kanji' && !examConfig.testKanji) return null;
+                                                                if (field === 'kana' && !examConfig.testKana) return null;
+                                                                if (field === 'meaning' && !examConfig.testMeaning) return null;
+
+                                                                const fieldTitles = { kanji: '漢字', kana: '假名', meaning: '中文' };
+                                                                const title = fieldTitles[field];
+                                                                const correctAns = q.word[field];
+                                                                const currentVal = examAnswers[field] || '';
+                                                                const isCorrect = currentVal.trim() === correctAns;
+
+                                                                return (
+                                                                    <div key={field} className="mb-2">
+                                                                        <div className="text-xs font-bold text-slate-400 mb-2">輸入正確的{title}</div>
+                                                                        <input
+                                                                            type="text"
+                                                                            value={currentVal}
+                                                                            onChange={(e) => !examSubmitted && setExamAnswers({...examAnswers, [field]: e.target.value})}
+                                                                            disabled={examSubmitted}
+                                                                            placeholder={`請輸入${title}...`}
+                                                                            className={`w-full p-4 border-2 rounded-xl outline-none font-bold text-lg transition-colors ${!examSubmitted ? 'bg-white border-slate-200 focus:border-blue-500' : (isCorrect ? 'bg-green-50 border-green-500 text-green-700' : 'bg-red-50 border-red-500 text-red-700')}`}
+                                                                        />
+                                                                        {examSubmitted && !isCorrect && (
+                                                                            <div className="mt-2 text-sm font-bold text-green-600">正確解答：{correctAns}</div>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    )}
 
                                                     {examSubmitted && q.word.example && (
                                                         <div className="mt-2 text-left bg-blue-50/50 p-3 rounded-lg text-sm border border-blue-100">
@@ -1833,7 +1889,7 @@
                                             )}
                                         </div>
 
-                                        {examConfig.type === 'standard' && (
+                                        {(examConfig.type === 'standard' || examConfig.type === 'typing') && (
                                             !examSubmitted ? (
                                                 <button onClick={submitStandardAnswer} disabled={!allAnswered} className={`py-4 rounded-xl font-bold w-full mt-auto transition-all ${allAnswered ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
                                                     確認答案
