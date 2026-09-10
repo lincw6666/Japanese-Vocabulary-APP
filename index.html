@@ -901,6 +901,30 @@
                     const fileContent = gistData.files[FILE_NAME].content;
                     const parsedData = JSON.parse(fileContent);
 
+                    // 👉 新增：如果是自動同步模式，先在記憶體中比對資料是否有差異
+                    if (autoMode) {
+                        let isDifferent = false;
+                        for (const key of Object.keys(parsedData)) {
+                            if (key !== 'vocabGithubToken' && key !== 'vocabGistId') {
+                                if (localStorage.getItem(key) !== parsedData[key]) {
+                                    isDifferent = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // 如果本機資料和雲端一模一樣，就不需要更新，也不用打擾使用者
+                        if (!isDifferent) {
+                            return { status: 'no_update_needed' };
+                        }
+
+                        // 發現資料不同，彈出視窗詢問使用者
+                        const wantSync = window.confirm('☁️ 發現雲端有不同的最新進度！\n\n是否要覆蓋目前本機的進度？\n(按「確定」載入雲端進度，按「取消」保留本機進度)');
+                        if (!wantSync) {
+                            return { status: 'user_cancelled' };
+                        }
+                    }
+
                     // 寫入本地 localStorage
                     Object.keys(parsedData).forEach(key => {
                         if (key !== 'vocabGithubToken' && key !== 'vocabGistId') {
@@ -908,18 +932,18 @@
                         }
                     });
 
-                    // 👉 標記本次工作階段已完成過同步，避免重新整理後又無限循環觸發
+                    // 標記本次工作階段已完成過同步，避免重新整理後又無限循環觸發
                     sessionStorage.setItem('app_synced_and_reloaded', 'true');
 
                     if (!autoMode) {
                         alert('📱 🎉 雲端進度已載入！畫面即將重新整理。');
                         location.reload();
                     }
-                    return true;
+                    return { status: 'success' };
                 } catch (error) {
                     console.error('Download failed:', error);
                     if (!autoMode) alert('❌ 下載失敗，請確認雲端資料格式是否正確。');
-                    return false;
+                    return { status: 'error' };
                 }
             };
 
@@ -941,17 +965,22 @@
                     console.warn('Audio unlock failed:', e);
                 }
 
-                // 如果有設定 Token 且 本次瀏覽器工作階段尚未同步過，則執行同步並「重新整理」
+                // 如果有設定 Token 且 本次瀏覽器工作階段尚未同步過，則執行進度檢查
                 if (githubToken && gistId && !hasAutoSynced) {
                     setIsSyncing(true);
-                    const success = await syncFromCloud(true);
-                    if (success) {
-                        // 👉 使用原本穩定好用的 reload 機制，確保 React 狀態乾淨重置
+                    const result = await syncFromCloud(true);
+
+                    if (result && result.status === 'success') {
+                        // 使用者同意載入新進度且寫入成功，執行重新整理
                         location.reload();
                         return; // 中止後續執行，等待重整
+                    } else if (result && (result.status === 'no_update_needed' || result.status === 'user_cancelled')) {
+                        // 無需更新或使用者點擊取消，標記為已處理，進入系統
+                        sessionStorage.setItem('app_synced_and_reloaded', 'true');
                     } else {
-                        alert('❌ 自動同步失敗，直接使用本機紀錄。');
-                        sessionStorage.setItem('app_synced_and_reloaded', 'true'); // 避免卡死，標記為已處理
+                        // 發生錯誤
+                        alert('❌ 自動同步檢查失敗，直接使用本機紀錄。');
+                        sessionStorage.setItem('app_synced_and_reloaded', 'true');
                     }
                 }
 
@@ -969,7 +998,7 @@
                                 {hasAutoSynced ? (
                                     <React.Fragment><i className="fas fa-check-circle mr-1"></i>雲端進度已更新，請點擊進入系統</React.Fragment>
                                 ) : (githubToken && gistId ? (
-                                    <React.Fragment><i className="fas fa-cloud-download-alt mr-1"></i>設定完成，按下開始將自動同步雲端進度</React.Fragment>
+                                    <React.Fragment><i className="fas fa-cloud-download-alt mr-1"></i>設定完成，按下開始將自動檢查雲端進度</React.Fragment>
                                 ) : (
                                     <React.Fragment><i className="fas fa-hdd mr-1"></i>尚未設定同步，將使用本機紀錄</React.Fragment>
                                 ))}
@@ -979,7 +1008,7 @@
                                 disabled={isSyncing}
                                 className={`px-10 py-4 text-xl rounded-full font-bold shadow-2xl transition-all flex items-center ${isSyncing ? 'bg-slate-200 text-blue-400 cursor-not-allowed' : 'bg-white text-blue-600 hover:scale-105 active:scale-95'}`}
                             >
-                                {isSyncing ? <React.Fragment><i className="fas fa-spinner fa-spin mr-2"></i>同步中...</React.Fragment> : (hasAutoSynced ? '進入系統' : '開始學習')}
+                                {isSyncing ? <React.Fragment><i className="fas fa-spinner fa-spin mr-2"></i>檢查中...</React.Fragment> : (hasAutoSynced ? '進入系統' : '開始學習')}
                             </button>
                         </div>
                     )}
