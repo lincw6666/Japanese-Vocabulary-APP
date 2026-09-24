@@ -100,11 +100,14 @@
                 localStorage.setItem('vocabPlaybackRate', playbackRate);
             }, [playbackRate]);
 
-            // 👉 新增：記憶上次勾選的級別與分頁
+            // 👉 新增：記憶上次勾選的級別與分頁（加入有效級別防呆過濾）
             const [selectedLevels, setSelectedLevels] = useState(() => {
                 try {
                     const saved = JSON.parse(localStorage.getItem('vocabLevels'));
-                    if (saved && saved.length > 0) return saved;
+                    if (saved && Array.isArray(saved) && saved.length > 0) {
+                        const valid = saved.filter(lvl => availableLevels.includes(lvl));
+                        if (valid.length > 0) return valid;
+                    }
                 } catch(e) {}
                 return availableLevels.length > 0 ? [availableLevels[availableLevels.length-1]] : [];
             });
@@ -505,6 +508,7 @@
             const speakSequenceIdRef = React.useRef(0);
 
             const stopCurrentAudio = () => {
+                speakSequenceIdRef.current++;
                 isSpeakingRef.current = false;
                 setIsSpeaking(false);
                 if (currentAudioSourceRef.current) {
@@ -515,6 +519,12 @@
                     currentAudioSourceRef.current = null;
                 }
             };
+
+            // 👉 切換 Tab 時自動停止所有音效與考試計時器，避免跨分頁背景跳題或殘響
+            useEffect(() => {
+                if (examTimeoutRef.current) clearTimeout(examTimeoutRef.current);
+                stopCurrentAudio();
+            }, [currentTab]);
 
             const handleStopClick = () => {
                 setIsPlaying(false);
@@ -677,6 +687,11 @@
 
                 let pool = [...currentVocabList];
 
+                if (pool.length < 4) {
+                    alert(`目前範圍的單字數量不足（僅 ${pool.length} 個單字），測驗至少需要 4 個單字！請擴大選擇級別或清除類別篩選。`);
+                    return;
+                }
+
                 if (examConfig.mode === 'mistakes') {
                     // 👉 修正：改為檢查近 10 次軌跡 (history) 中是否有答錯紀錄
                     pool = pool.filter(v => {
@@ -706,18 +721,34 @@
                     }
                 }
 
+                // 👉 修正：徹底杜絕 while 隨機抽取在值重複時造成的無窮死迴圈
                 const generateOptions = (correctWord, field) => {
                     const options = [correctWord];
                     const usedValues = new Set([correctWord[field]]);
 
-                    while(options.length < 4 && options.length < currentVocabList.length) {
-                        const randomWord = currentVocabList[Math.floor(Math.random() * currentVocabList.length)];
-                        if (!usedValues.has(randomWord[field])) {
-                            options.push(randomWord);
-                            usedValues.add(randomWord[field]);
+                    // 找出所有該欄位值相異的候選單字
+                    const candidates = [];
+                    const candidateValues = new Set();
+                    for (const w of currentVocabList) {
+                        const val = w[field];
+                        if (val && !usedValues.has(val) && !candidateValues.has(val)) {
+                            candidateValues.add(val);
+                            candidates.push(w);
                         }
                     }
 
+                    // 洗牌候選者
+                    for (let i = candidates.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+                    }
+
+                    // 填入最多 3 個干擾項
+                    for (let i = 0; i < candidates.length && options.length < 4; i++) {
+                        options.push(candidates[i]);
+                    }
+
+                    // 最終選項洗牌
                     for (let i = options.length - 1; i > 0; i--) {
                         const j = Math.floor(Math.random() * (i + 1));
                         [options[i], options[j]] = [options[j], options[i]];
@@ -727,10 +758,10 @@
 
                 const questions = pool.map(word => ({
                     word,
-                    // 👉 修正：聽力測驗取消產生漢字選項，改為產生中文(Meaning)選項
-                    optionsKanji: (examConfig.type !== 'listening' && examConfig.testKanji) ? generateOptions(word, 'kanji') : null,
-                    optionsKana: (examConfig.type !== 'listening' && examConfig.testKana) ? generateOptions(word, 'kana') : null,
-                    optionsMeaning: (examConfig.type === 'listening' || examConfig.testMeaning) ? generateOptions(word, 'meaning') : null,
+                    // 👉 修正：打字模式不浪費資源計算選項；聽力測驗產生中文選項；標準模式按設定產生
+                    optionsKanji: (examConfig.type === 'standard' && examConfig.testKanji) ? generateOptions(word, 'kanji') : null,
+                    optionsKana: (examConfig.type === 'standard' && examConfig.testKana) ? generateOptions(word, 'kana') : null,
+                    optionsMeaning: (examConfig.type === 'listening' || (examConfig.type === 'standard' && examConfig.testMeaning)) ? generateOptions(word, 'meaning') : null,
                 }));
 
                 setExamQuestions(questions);
@@ -1094,7 +1125,7 @@
                         )}
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.13</span></h1>
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.14</span></h1>
                                 <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
                                     <i className="fas fa-download mr-1"></i>匯出紀錄
                                 </button>
@@ -1173,7 +1204,25 @@
 
                         <div className="p-4 flex-1 flex flex-col">
                             {currentTab === 'study' && (() => {
-                                if (currentVocabList.length === 0) return null;
+                                if (currentVocabList.length === 0) {
+                                    return (
+                                        <div className="flex flex-col flex-1 items-center justify-center text-center p-6 bg-white rounded-2xl shadow-sm border border-slate-100 mt-4">
+                                            <i className="fas fa-filter text-6xl text-slate-300 mb-6 drop-shadow-md"></i>
+                                            <h3 className="text-xl font-bold text-slate-800 mb-2">未找到符合條件的單字</h3>
+                                            <p className="text-slate-500 text-sm mb-6 max-w-xs">目前選取的級別或類別篩選無任何單字，請切換級別或重設篩選條件。</p>
+                                            <div className="flex gap-3">
+                                                {selectedCategories.length > 0 && (
+                                                    <button onClick={() => setSelectedCategories([])} className="py-3 px-6 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all text-sm">
+                                                        清空類別篩選
+                                                    </button>
+                                                )}
+                                                <button onClick={() => setShowSidebar(true)} className="py-3 px-6 bg-slate-700 text-white font-bold rounded-xl shadow-lg hover:bg-slate-800 active:scale-95 transition-all text-sm">
+                                                    打開設置切換級別
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                }
 
                                 if (isFavoritesMode && activeVocabList.length === 0) {
                                     return (
@@ -1347,7 +1396,26 @@
                                 );
                             })()}
 
-                            {currentTab === 'listening' && currentVocabList.length > 0 && (() => {
+                            {currentTab === 'listening' && (() => {
+                                if (currentVocabList.length === 0) {
+                                    return (
+                                        <div className="flex flex-col flex-1 items-center justify-center text-center p-6 bg-white rounded-2xl shadow-sm border border-slate-100 mt-4">
+                                            <i className="fas fa-filter text-6xl text-slate-300 mb-6 drop-shadow-md"></i>
+                                            <h3 className="text-xl font-bold text-slate-800 mb-2">未找到符合條件的單字</h3>
+                                            <p className="text-slate-500 text-sm mb-6 max-w-xs">目前選取的級別或類別篩選無任何單字，請切換級別或重設篩選條件。</p>
+                                            <div className="flex gap-3">
+                                                {selectedCategories.length > 0 && (
+                                                    <button onClick={() => setSelectedCategories([])} className="py-3 px-6 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all text-sm">
+                                                        清空類別篩選
+                                                    </button>
+                                                )}
+                                                <button onClick={() => setShowSidebar(true)} className="py-3 px-6 bg-slate-700 text-white font-bold rounded-xl shadow-lg hover:bg-slate-800 active:scale-95 transition-all text-sm">
+                                                    打開設置切換級別
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                }
                                 if (isFavoritesMode && activeVocabList.length === 0) {
                                     return (
                                         <div className="flex flex-col flex-1 items-center justify-center text-center p-6 bg-white rounded-2xl shadow-sm border border-slate-100 mt-4">
