@@ -35,3 +35,8 @@ Learning progress is stored in the browser's `localStorage`.
 
 ## 📱 Cross-Device Tips
 For the best experience on iPad and iPhone, add the website to your **Home Screen**. This enables full-screen immersive mode and allows you to continue your reviews even when offline!
+
+## 🏯 文法擴充 (v5.0)
+* `grammar_DB.js`：S01~S08 情境、U01~U12 心態寶典、挖空題庫（檔頭有增補新題說明）。
+* `conjugation_engine.js`：依勾選級別單字自動產生活用變化題與干擾項。
+* `generate_grammar_audio.py`：`pip install edge-tts` 後執行，將文法例句批次轉成 `./audio/grammar/*.mp3`；沒有 MP3 時前端自動改用瀏覽器 TTS。

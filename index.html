@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
@@ -16,6 +16,10 @@
     <script src="vocab_N3.js" onerror="console.log('尚未建立 N3')"></script>
     <script src="vocab_N4.js" onerror="console.log('尚未建立 N4')"></script>
     <script src="vocab_N5.js" onerror="console.log('尚未建立 N5')"></script>
+
+    <!-- 文法資料庫（情境 S01~S08、心態寶典 U01~U12、挖空題庫）與詞類活用變化引擎 -->
+    <script src="grammar_DB.js" onerror="console.log('尚未建立 grammar_DB.js')"></script>
+    <script src="conjugation_engine.js" onerror="console.log('尚未建立 conjugation_engine.js')"></script>
 
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap');
@@ -62,7 +66,536 @@
             return globalAudioCtx;
         };
 
+        // =====================================================================
+        // 🏯 文法模組：文法課程 (S01~S08 / U01~U12) ＋ 文法測驗 (挖空 / 活用變化 / 混合)
+        // 資料：window.GRAMMAR_DB (grammar_DB.js)　引擎：window.ConjugationEngine (conjugation_engine.js)
+        // 共用 App 的 selectedLevels / currentVocabList / stats / favoriteIds / speak 等狀態
+        // =====================================================================
+        function useLocalState(key, initial) {
+            const [v, setV] = useState(() => {
+                try { const s = localStorage.getItem(key); return s === null ? initial : JSON.parse(s); } catch (e) { return initial; }
+            });
+            useEffect(() => { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {} }, [key, v]);
+            return [v, setV];
+        }
+        const gShuffle = (arr) => {
+            const a = arr.slice();
+            for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+            return a;
+        };
+        const BLANK = '（  ）';
+
+        function GrammarModule(props) {
+            if (!window.GRAMMAR_DB || !window.ConjugationEngine) {
+                return (
+                    <div className="bg-white p-6 rounded-2xl shadow-sm text-center text-slate-500">
+                        <i className="fas fa-exclamation-triangle text-3xl text-amber-400 mb-3"></i>
+                        <p className="font-bold">尚未讀取到文法資料庫</p>
+                        <p className="text-sm mt-1">請確認 <b>grammar_DB.js</b> 與 <b>conjugation_engine.js</b> 和 index.html 放在同一個資料夾。</p>
+                    </div>
+                );
+            }
+            return <GrammarInner {...props} />;
+        }
+
+        function GrammarInner(props) {
+            const { currentTab, setCurrentTab, selectedLevels, currentVocabList, stats, updateStats, favoriteIds, toggleFavorite,
+                    speakText, speakWord, stopCurrentAudio, grammarProgress, setGrammarProgress, setShowSidebar } = props;
+            const G = window.GRAMMAR_DB, E = window.ConjugationEngine;
+
+            // ---------- 共用：單字索引 ----------
+            const vocabIndex = useMemo(() => {
+                const m = {};
+                Object.keys(window.VOCAB_DB || {}).forEach(l => (window.VOCAB_DB[l] || []).forEach(w => { m[w.id] = w; }));
+                return m;
+            }, []);
+            const levelOfId = (id) => (id || '').split('_')[0];
+
+            // ---------- 課程狀態 ----------
+            const [courseKind, setCourseKind] = useLocalState('grammarCourseKind', 'S');
+            const [courseId, setCourseId] = useLocalState('grammarCourseId', 'S01');
+            const items = courseKind === 'S' ? G.scenarios : G.vaultUnits;
+            const current = items.find(x => x.id === courseId) || items[0];
+
+            const isDone = (id) => !!(grammarProgress[id] && grammarProgress[id].done);
+            const toggleDone = (id) => setGrammarProgress(prev => {
+                const next = Object.assign({}, prev);
+                if (next[id] && next[id].done) next[id] = { done: false, at: Date.now() };
+                else next[id] = { done: true, at: Date.now() };
+                return next;
+            });
+            const doneCount = (list) => list.filter(x => isDone(x.id)).length;
+            const pctOf = (list) => list.length ? Math.round(doneCount(list) / list.length * 100) : 0;
+            // 單項完成度：已標記學完＝100%，否則以該情境／單元「挖空題已作答比例」估算
+            const itemPct = (it) => {
+                if (isDone(it.id)) return 100;
+                const qs = G.clozeQuestions.filter(q => q.unitId === it.id || q.scenarioId === it.id);
+                if (!qs.length) return 0;
+                const tried = qs.filter(q => stats[q.id] && stats[q.id].history && stats[q.id].history.length).length;
+                return Math.round(tried / qs.length * 100);
+            };
+            const goItem = (delta) => {
+                const idx = items.findIndex(x => x.id === current.id);
+                const n = items[(idx + delta + items.length) % items.length];
+                setCourseId(n.id);
+                window.scrollTo(0, 0);
+            };
+
+            // ---------- 測驗設定 ----------
+            const [cfg, setCfg] = useLocalState('grammarExamConfig', { mode: 'cloze', logic: 'random', count: 20, scopes: [], forms: [] });
+            const [qs, setQs] = useState([]);
+            const [qIdx, setQIdx] = useState(0);
+            const [picked, setPicked] = useState(null);
+            const [submitted, setSubmitted] = useState(false);
+            const [tested, setTested] = useState([]);
+            const [showSummary, setShowSummary] = useState(false);
+
+            const scopeMatch = (q) => cfg.scopes.length === 0 || cfg.scopes.indexOf(q.unitId) >= 0 || cfg.scopes.indexOf(q.scenarioId) >= 0;
+            const clozeAvail = useMemo(() => G.clozeQuestions.filter(q => selectedLevels.indexOf(q.vocabLevel) >= 0 && scopeMatch(q)),
+                [selectedLevels, cfg.scopes]);
+            const conjAvailCount = useMemo(() => {
+                let n = 0;
+                E.withSupplement(currentVocabList, selectedLevels).forEach(w => {
+                    E.eligibleForms(w).forEach(f => { if (cfg.forms.length === 0 || cfg.forms.indexOf(f) >= 0) n++; });
+                });
+                return n;
+            }, [currentVocabList, selectedLevels, cfg.forms]);
+
+            const rateOf = (id) => { const s = stats[id]; return s ? (s.wrong || 0) / ((s.correct || 0) + (s.wrong || 0) + 1) : 0; };
+            const hasWrong = (id) => { const s = stats[id]; return !!(s && s.history && s.history.some(r => !r)); };
+            const applyLogic = (cands) => {
+                if (cfg.logic === 'mistakes') return gShuffle(cands.filter(c => hasWrong(c.id)));
+                if (cfg.logic === 'favorites') return gShuffle(cands.filter(c => favoriteIds.has(c.id)));
+                if (cfg.logic === 'weighted') {
+                    return cands.map(c => ({ c, k: Math.random() * (1 - rateOf(c.id)) })).sort((a, b) => a.k - b.k).map(x => x.c);
+                }
+                return gShuffle(cands);
+            };
+
+            const buildCloze = (q) => ({
+                kind: 'cloze', id: q.id, src: q, answer: q.answer,
+                options: gShuffle([q.answer].concat(q.traps)),
+                audioUrl: q.audio, speakStr: q.sentence.replace(BLANK, q.answer)
+            });
+
+            const startGrammarExam = () => {
+                if (stopCurrentAudio) stopCurrentAudio();
+                let clozeC = [], conjC = [];
+                if (cfg.mode !== 'conj') clozeC = clozeAvail.map(q => ({ kind: 'cloze', id: q.id, q }));
+                if (cfg.mode !== 'cloze') {
+                    E.withSupplement(currentVocabList, selectedLevels).forEach(w => {
+                        E.eligibleForms(w).forEach(f => {
+                            if (cfg.forms.length === 0 || cfg.forms.indexOf(f) >= 0) conjC.push({ kind: 'conj', id: 'CONJ_' + w.id + '_' + f, w, f });
+                        });
+                    });
+                }
+                clozeC = applyLogic(clozeC); conjC = applyLogic(conjC);
+                const total = clozeC.length + conjC.length;
+                if (total === 0) {
+                    const hint = { mistakes: '近 10 次內答錯的題目', favorites: '「我的最愛」題目' }[cfg.logic];
+                    alert(hint ? `目前範圍內沒有${hint}！請先作答累積紀錄，或換一種出題邏輯。` : '目前範圍沒有可出的題目，請放寬篩選（勾選更多級別／單元／變化類型）。');
+                    return;
+                }
+                const want = cfg.count === 0 ? total : Math.min(cfg.count, total);
+                let pickC = [], pickJ = [];
+                if (cfg.mode === 'cloze') pickC = clozeC.slice(0, want);
+                else if (cfg.mode === 'conj') pickJ = conjC.slice(0, want);
+                else {
+                    let nC = Math.min(clozeC.length, Math.ceil(want / 2)), nJ = Math.min(conjC.length, want - nC);
+                    nC = Math.min(clozeC.length, want - nJ);
+                    pickC = clozeC.slice(0, nC); pickJ = conjC.slice(0, nJ);
+                }
+                const built = pickC.map(c => buildCloze(c.q)).concat(pickJ.map(c => {
+                    const q = E.makeQuestion(c.w, c.f);
+                    return q ? { kind: 'conj', id: q.id, src: q, answer: q.answer, options: q.options, audioUrl: null, speakStr: q.reading || q.answer } : null;
+                }).filter(Boolean));
+                setQs(gShuffle(built));
+                setQIdx(0); setPicked(null); setSubmitted(false); setTested([]); setShowSummary(false);
+                setCurrentTab('grammar_exam');
+                window.scrollTo(0, 0);
+            };
+
+            const submitAnswer = () => {
+                const q = qs[qIdx];
+                const ok = picked === q.answer;
+                updateStats(q.id, ok);
+                setTested(prev => prev.concat([{ q, isCorrect: ok }]));
+                setSubmitted(true);
+                if (speakText) speakText(q.speakStr, q.audioUrl);
+            };
+            const nextQuestion = () => {
+                if (qIdx + 1 < qs.length) { setQIdx(qIdx + 1); setPicked(null); setSubmitted(false); }
+                else { if (stopCurrentAudio) stopCurrentAudio(); setShowSummary(true); }
+            };
+
+            // ---------- 共用 UI 片段 ----------
+            const Card = ({ children, className }) => <div className={`bg-white rounded-2xl shadow-sm border border-slate-100 p-4 mb-3 ${className || ''}`}>{children}</div>;
+            const SpeakBtn = ({ text, url }) => (
+                <button onClick={(e) => { e.stopPropagation(); speakText(text, url); }} className="text-slate-400 hover:text-blue-500 active:scale-90 transition-all px-1">
+                    <i className="fas fa-volume-up"></i>
+                </button>
+            );
+            const renderTable = (t) => (
+                <div className="overflow-x-auto my-2 border border-slate-200 rounded-lg">
+                    <table className="min-w-full text-xs">
+                        <thead className="bg-slate-100 text-slate-600"><tr>{t.headers.map((h, i) => <th key={i} className="p-2 text-left font-bold whitespace-nowrap">{h}</th>)}</tr></thead>
+                        <tbody>{t.rows.map((r, ri) => (
+                            <tr key={ri} className={ri % 2 ? 'bg-slate-50' : 'bg-white'}>{r.map((c, ci) => <td key={ci} className={`p-2 align-top border-t border-slate-100 ${ci === 0 ? 'font-bold text-slate-700' : 'text-slate-600'}`} style={{ minWidth: ci === 0 ? '5rem' : '8rem' }}>{c}</td>)}</tr>
+                        ))}</tbody>
+                    </table>
+                </div>
+            );
+            const vocabChips = (ids) => {
+                const words = Array.from(new Set(ids)).map(id => vocabIndex[id]).filter(w => w && selectedLevels.indexOf(levelOfId(w.id)) >= 0);
+                return (
+                    <Card>
+                        <div className="text-sm font-bold text-slate-600 mb-2"><i className="fas fa-book mr-1 text-blue-500"></i>關聯單字（依側邊欄級別 {selectedLevels.join('、')} 篩選）</div>
+                        {words.length === 0 ? (
+                            <div className="text-xs text-slate-400">目前勾選的級別沒有此課的關聯單字，可到側邊欄勾選更多級別。</div>
+                        ) : (
+                            <div className="flex flex-wrap gap-2">{words.map(w => (
+                                <button key={w.id} onClick={() => speakWord(w, false)} className="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-left hover:bg-blue-50 active:scale-95">
+                                    <span className="font-bold text-slate-800">{w.kanji}</span> <span className="text-slate-500">（{w.kana}）</span>
+                                    <span className="text-blue-600"> {w.meaning}</span> <span className="text-[10px] text-slate-400">{levelOfId(w.id)}</span>
+                                </button>
+                            ))}</div>
+                        )}
+                    </Card>
+                );
+            };
+            const practiceBtn = (id) => {
+                const n = G.clozeQuestions.filter(q => (q.unitId === id || q.scenarioId === id) && selectedLevels.indexOf(q.vocabLevel) >= 0).length;
+                return (
+                    <button onClick={() => { setCfg(Object.assign({}, cfg, { mode: 'cloze', scopes: [id] })); setCurrentTab('grammar_exam_setup'); window.scrollTo(0, 0); }}
+                        className="w-full py-3 mb-3 rounded-xl bg-indigo-600 text-white font-bold shadow-md active:scale-95 transition-all">
+                        <i className="fas fa-pen mr-2"></i>練習本課挖空題（目前級別共 {n} 題）
+                    </button>
+                );
+            };
+
+            // ================= 文法課程 =================
+            const renderScenario = (s) => {
+                const tiers = [['tier1', 'Tier 1 丁寧體', '對店員 / 路人', 'bg-emerald-50 border-emerald-200'], ['tier2', 'Tier 2 一般常體', '對普通朋友', 'bg-sky-50 border-sky-200'], ['tier3', 'Tier 3 死黨道地口語', '對好朋友 / 旅伴', 'bg-pink-50 border-pink-200']];
+                return (
+                    <div>
+                        <Card>
+                            <div className="text-[11px] text-slate-400 mb-1">{s.stage}　｜　最低建議級別 {s.minLevel}</div>
+                            <h2 className="text-lg font-bold text-slate-800 mb-3">{s.title}</h2>
+                            <div className="text-sm font-bold text-slate-600 mb-1">💡 核心語法公式</div>
+                            <ul className="text-sm text-slate-700 list-disc ml-5 mb-3">{s.formulas.map((f, i) => <li key={i}>{f}</li>)}</ul>
+                            <div className="text-sm font-bold text-slate-600 mb-1">🧠 母語者大腦心態與隱喻</div>
+                            <ul className="text-sm text-slate-700 list-disc ml-5">{s.mentalModels.map((f, i) => <li key={i}>{f}</li>)}</ul>
+                        </Card>
+                        <Card>
+                            <div className="text-sm font-bold text-slate-600 mb-2">🗣️ 三維度禮貌層級對比矩陣 (3-Tier Matrix)</div>
+                            {tiers.map(t => {
+                                const m = s.matrix[t[0]];
+                                return (
+                                    <div key={t[0]} className={`rounded-xl border p-3 mb-2 ${t[3]}`}>
+                                        <div className="flex justify-between items-center text-[11px] font-bold text-slate-500 mb-1"><span>{t[1]}（{t[2]}）</span><SpeakBtn text={m.ja} url={m.audio} /></div>
+                                        <div className="text-base font-bold text-slate-800">{m.ja}</div>
+                                        <div className="text-xs text-slate-500">{m.kana}</div>
+                                        <div className="text-xs text-slate-600 mt-1">{m.zh}</div>
+                                    </div>
+                                );
+                            })}
+                        </Card>
+                        <Card>
+                            <div className="text-sm font-bold text-slate-600 mb-2">👂 店員 / 站務員高頻敬語聽力雷達 (Receptive Keigo)</div>
+                            <div className="text-[11px] text-slate-400 mb-2">只要「聽懂」即可，不需要主動開口講；回答用簡單丁寧體。</div>
+                            {s.receptiveKeigo.map((k, i) => (
+                                <div key={i} className="border-l-4 border-amber-300 bg-amber-50 rounded-r-lg p-2 mb-2">
+                                    <div className="flex justify-between items-start"><div className="text-sm font-bold text-slate-800">「{k.ja}」</div><SpeakBtn text={k.ja} url={k.audio} /></div>
+                                    <div className="text-xs text-slate-500">{k.zh}</div>
+                                    {k.reply && <div className="text-xs text-emerald-700 mt-1">💬 可以回：{k.reply}</div>}
+                                </div>
+                            ))}
+                        </Card>
+                        {vocabChips(s.vocabIds || [])}
+                        <Card>
+                            <div className="text-sm font-bold text-slate-600 mb-2">📚 對應心態寶典</div>
+                            <div className="flex flex-wrap gap-2">{s.vaultRefs.map(u => {
+                                const unit = G.vaultUnits.find(x => x.id === u);
+                                return <button key={u} onClick={() => { setCourseKind('U'); setCourseId(u); window.scrollTo(0, 0); }} className="text-xs bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-lg px-2 py-1 font-bold active:scale-95">{u} {unit ? unit.title.replace(/^單元 \d+：/, '').slice(0, 18) : ''}</button>;
+                            })}</div>
+                        </Card>
+                        <Card>
+                            <div className="text-sm font-bold text-slate-600 mb-1">🎭 NotebookLM 對話指令</div>
+                            <div className="flex items-center gap-2 bg-slate-800 text-green-300 rounded-lg p-2 text-xs font-mono break-all">
+                                <span className="flex-1">{s.roleplayCmd}</span>
+                                <button onClick={() => { try { navigator.clipboard.writeText(s.roleplayCmd); alert('已複製指令'); } catch (e) {} }} className="text-white bg-slate-600 rounded px-2 py-1 flex-shrink-0">複製</button>
+                            </div>
+                            {s.roleplayNote && <div className="text-[11px] text-slate-400 mt-1">{s.roleplayNote}</div>}
+                            {s.roleplayRef && (() => { const r = (G.roleplays || []).find(x => x.id === s.roleplayRef); return r ? <div className="text-[11px] text-slate-500 mt-2">{r.title}<br />開場白：{r.opening}</div> : null; })()}
+                        </Card>
+                        {practiceBtn(s.id)}
+                    </div>
+                );
+            };
+            const renderUnit = (u) => {
+                const ids = [];
+                u.sections.forEach(sec => (sec.examples || []).forEach(e => (e.vocabIds || []).forEach(i => ids.push(i))));
+                return (
+                    <div>
+                        <Card>
+                            <h2 className="text-lg font-bold text-slate-800 mb-2">{u.title}</h2>
+                            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-slate-700">🧠 {u.coreMindset}</div>
+                            {u.scenarioRefs && <div className="text-[11px] text-slate-400 mt-2">相關實戰情境：{u.scenarioRefs.join('、')}</div>}
+                        </Card>
+                        {u.sections.map((sec, si) => (
+                            <Card key={si}>
+                                <div className="font-bold text-slate-800 mb-1">{sec.subtitle}</div>
+                                {sec.mindset && <div className="text-sm text-slate-600 mb-2">{sec.mindset}</div>}
+                                {sec.formula && <div className="text-sm font-mono bg-slate-800 text-green-300 rounded-lg p-2 mb-2 break-words">{sec.formula}</div>}
+                                {sec.points && <ul className="text-sm text-slate-700 list-disc ml-5 mb-2">{sec.points.map((p, i) => <li key={i}>{p}</li>)}</ul>}
+                                {sec.table && renderTable(sec.table)}
+                                {sec.examples && sec.examples.map((ex, ei) => (
+                                    <div key={ei} className="bg-slate-50 border border-slate-100 rounded-lg p-2 mb-2">
+                                        <div className="flex justify-between items-start"><div className="text-sm font-bold text-slate-800">{ex.ja}</div><SpeakBtn text={ex.ja} url={ex.audio} /></div>
+                                        <div className="text-xs text-slate-500 mt-1">{ex.zh}</div>
+                                    </div>
+                                ))}
+                                {sec.warnings && sec.warnings.map((w, i) => <div key={i} className="text-xs bg-red-50 border border-red-200 text-red-700 rounded-lg p-2 mb-1">{w}</div>)}
+                            </Card>
+                        ))}
+                        {vocabChips(ids)}
+                        {practiceBtn(u.id)}
+                    </div>
+                );
+            };
+
+            if (currentTab === 'grammar_course') {
+                const sPct = pctOf(G.scenarios), uPct = pctOf(G.vaultUnits), allPct = Math.round((doneCount(G.scenarios) + doneCount(G.vaultUnits)) / (G.scenarios.length + G.vaultUnits.length) * 100);
+                const listPct = courseKind === 'S' ? sPct : uPct;
+                return (
+                    <div className="flex flex-col">
+                        <Card>
+                            <div className="flex justify-between text-xs font-bold text-slate-500 mb-1"><span>🏯 文法課程總完成度</span><span className="text-blue-600">{allPct}%</span></div>
+                            <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden mb-2"><div className="h-full bg-blue-500 transition-all" style={{ width: allPct + '%' }}></div></div>
+                            <div className="flex justify-between text-[11px] text-slate-500"><span>S 實戰情境 {sPct}%（{doneCount(G.scenarios)}/{G.scenarios.length}）</span><span>U 心態寶典 {uPct}%（{doneCount(G.vaultUnits)}/{G.vaultUnits.length}）</span></div>
+                        </Card>
+                        <div className="grid grid-cols-2 gap-2 mb-3">
+                            {[['S', '🚩 S01~S08 實戰情境'], ['U', '🧠 U01~U12 心態寶典']].map(k => (
+                                <button key={k[0]} onClick={() => { setCourseKind(k[0]); setCourseId(k[0] === 'S' ? G.scenarios[0].id : G.vaultUnits[0].id); }}
+                                    className={`py-2.5 rounded-xl text-sm font-bold border transition-all ${courseKind === k[0] ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white text-slate-500'}`}>{k[1]}</button>
+                            ))}
+                        </div>
+                        <div className="text-xs text-slate-500 mb-1 px-1">{courseKind === 'S' ? '情境' : '單元'}完成度：<b className="text-blue-600">{listPct}%</b></div>
+                        <div className="mb-3 relative">
+                            <select value={current.id} onChange={(e) => { setCourseId(e.target.value); window.scrollTo(0, 0); }}
+                                className="w-full p-3 pr-10 border border-slate-200 rounded-xl bg-white text-slate-700 text-sm font-bold shadow-sm outline-none focus:border-blue-500 appearance-none cursor-pointer">
+                                {items.map(it => (
+                                    <option key={it.id} value={it.id}>{isDone(it.id) ? '✅' : '⬜'} {itemPct(it)}% ｜ {it.title.replace(/^單元 /, '')}</option>
+                                ))}
+                            </select>
+                            <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-slate-400"><i className="fas fa-chevron-down"></i></div>
+                        </div>
+                        {courseKind === 'S' ? renderScenario(current) : renderUnit(current)}
+                        <div className="sticky bottom-3 flex gap-2 mt-2">
+                            <button onClick={() => goItem(-1)} className="w-12 rounded-xl bg-white border border-slate-200 shadow text-slate-500 active:scale-95"><i className="fas fa-chevron-left"></i></button>
+                            <button onClick={() => toggleDone(current.id)} className={`flex-1 py-3 rounded-xl font-bold shadow-lg active:scale-95 transition-all ${isDone(current.id) ? 'bg-emerald-500 text-white' : 'bg-slate-800 text-white'}`}>
+                                {isDone(current.id) ? '✅ 已學完（點擊取消）' : '☐ 標記為已學完'}
+                            </button>
+                            <button onClick={() => goItem(1)} className="w-12 rounded-xl bg-white border border-slate-200 shadow text-slate-500 active:scale-95"><i className="fas fa-chevron-right"></i></button>
+                        </div>
+                    </div>
+                );
+            }
+
+            // ================= 文法測驗：設定面板 (grammar_exam_setup) =================
+            if (currentTab === 'grammar_exam_setup' || (currentTab === 'grammar_exam' && qs.length === 0)) {
+                const toggleIn = (key, val) => setCfg(Object.assign({}, cfg, { [key]: cfg[key].indexOf(val) >= 0 ? cfg[key].filter(x => x !== val) : cfg[key].concat([val]) }));
+                const chip = (on, label, onClick, key) => (
+                    <button key={key} onClick={onClick} className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all active:scale-95 ${on ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>{label}</button>
+                );
+                const modes = [['cloze', '① 例句挖空選擇題'], ['conj', '② 動詞/形容詞/名詞活用變化特訓'], ['mixed', '③ 混合實戰抽考']];
+                const presets = [['全部', []], ['動詞 8 變化', E.VERB_FORMS], ['形容詞四時態', E.ADJ4], ['只練 て形', ['te']], ['只練 可能形', ['pot']], ['只練 ない形', ['nai']]];
+                return (
+                    <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100" id="grammar_exam_setup">
+                        <h2 className="text-lg font-bold mb-1 border-b pb-2"><i className="fas fa-sliders-h mr-2"></i>文法測驗設定</h2>
+                        <div className="text-[11px] text-slate-400 mb-4">目前級別：{selectedLevels.join('、')}（到側邊欄 <button className="text-blue-500 underline" onClick={() => setShowSidebar(true)}>切換</button>）</div>
+
+                        <p className="text-sm font-bold text-slate-500 mb-2">測驗模式</p>
+                        <div className="flex flex-col gap-2 mb-5">{modes.map(m => (
+                            <button key={m[0]} onClick={() => setCfg(Object.assign({}, cfg, { mode: m[0] }))} className={`py-3 rounded-xl text-sm font-bold border transition-colors ${cfg.mode === m[0] ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-slate-50 text-slate-500'}`}>{m[1]}</button>
+                        ))}</div>
+
+                        {cfg.mode !== 'conj' && (
+                            <div className="mb-5">
+                                <p className="text-sm font-bold text-slate-500 mb-2">挖空題範圍：文法單元 / 情境（不選＝全部）　<span className="text-blue-600">可用 {clozeAvail.length} 題</span></p>
+                                <div className="text-[11px] text-slate-400 mb-1">實戰情境</div>
+                                <div className="flex flex-wrap gap-1.5 mb-2">{G.scenarios.map(s => chip(cfg.scopes.indexOf(s.id) >= 0, s.id, () => toggleIn('scopes', s.id), s.id))}</div>
+                                <div className="text-[11px] text-slate-400 mb-1">心態寶典</div>
+                                <div className="flex flex-wrap gap-1.5">{G.vaultUnits.map(u => chip(cfg.scopes.indexOf(u.id) >= 0, u.id, () => toggleIn('scopes', u.id), u.id))}</div>
+                                {cfg.scopes.length > 0 && <button onClick={() => setCfg(Object.assign({}, cfg, { scopes: [] }))} className="text-xs text-slate-400 underline mt-2">清除範圍</button>}
+                            </div>
+                        )}
+
+                        {cfg.mode !== 'cloze' && (
+                            <div className="mb-5">
+                                <p className="text-sm font-bold text-slate-500 mb-2">活用變化類型（不選＝全部）　<span className="text-blue-600">可出 {conjAvailCount} 題</span></p>
+                                <div className="flex flex-wrap gap-1.5 mb-2">{presets.map(p => chip(JSON.stringify(cfg.forms) === JSON.stringify(p[1]), p[0], () => setCfg(Object.assign({}, cfg, { forms: p[1].slice() })), p[0]))}</div>
+                                <div className="flex flex-wrap gap-1.5">{E.ALL_FORM_KEYS.map(f => chip(cfg.forms.indexOf(f.key) >= 0, f.label, () => toggleIn('forms', f.key), f.key))}</div>
+                                <div className="text-[11px] text-slate-400 mt-2">題目直接取自你勾選級別的單字（依詞性自動活用）；て形／すぎ 會同時涵蓋動詞與形容詞。</div>
+                            </div>
+                        )}
+
+                        <div className="mb-5">
+                            <p className="text-sm font-bold text-slate-500 mb-2">出題邏輯</p>
+                            <select className="w-full p-3 border rounded-xl bg-slate-50 text-slate-700 font-bold outline-none focus:border-blue-500" value={cfg.logic} onChange={(e) => setCfg(Object.assign({}, cfg, { logic: e.target.value }))}>
+                                <option value="random">完全隨機抽考</option>
+                                <option value="weighted">弱點加權 (錯越多越容易出)</option>
+                                <option value="mistakes">地獄錯題本 (只考近 10 次內有錯的題目)</option>
+                                <option value="favorites">我的最愛 (隨機)</option>
+                            </select>
+                        </div>
+
+                        <div className="mb-6">
+                            <p className="text-sm font-bold text-slate-500 mb-2">題數</p>
+                            <div className="flex gap-2">{[10, 20, 30, 50, 0].map(n => chip(cfg.count === n, n === 0 ? '全部' : n + '題', () => setCfg(Object.assign({}, cfg, { count: n })), n))}</div>
+                        </div>
+
+                        <button onClick={startGrammarExam} className="w-full bg-slate-800 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-slate-700 active:scale-95 transition-all">
+                            <i className="fas fa-play mr-2"></i>開始文法測驗
+                        </button>
+                    </div>
+                );
+            }
+
+            // ================= 測驗總結 =================
+            if (currentTab === 'grammar_exam' && showSummary) {
+                const sorted = tested.slice().sort((a, b) => {
+                    const sA = stats[a.q.id] || { history: [], wrong: 0 }, sB = stats[b.q.id] || { history: [], wrong: 0 };
+                    const rA = (sA.history || []).filter(r => !r).length, rB = (sB.history || []).filter(r => !r).length;
+                    if (rB !== rA) return rB - rA;
+                    return (sB.wrong || 0) - (sA.wrong || 0);
+                });
+                const okN = tested.filter(t => t.isCorrect).length;
+                return (
+                    <div className="flex flex-col flex-1">
+                        <h2 className="text-2xl font-bold text-slate-800 mb-1 text-center"><i className="fas fa-clipboard-check mr-2 text-blue-500"></i>文法測驗總結</h2>
+                        <div className="text-center text-sm text-slate-500 mb-4">答對 <b className="text-green-600">{okN}</b> / {tested.length}（{tested.length ? Math.round(okN / tested.length * 100) : 0}%）</div>
+                        <div className="bg-white rounded-2xl shadow-sm p-4 mb-4 border border-slate-100 max-h-[60vh] overflow-y-auto">
+                            {sorted.length === 0 ? <div className="text-center text-slate-400 py-10 font-bold">本次沒有作答紀錄</div> : sorted.map((t, idx) => {
+                                const s = stats[t.q.id] || { correct: 0, wrong: 0, history: [] };
+                                const recent10 = (s.history || []).slice(-10);
+                                const title = t.q.kind === 'cloze' ? t.q.src.sentence.replace(BLANK, '【' + t.q.answer + '】') : t.q.src.prompt;
+                                return (
+                                    <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-200 relative mb-3">
+                                        <div className="absolute top-3 right-3 text-xl">{t.isCorrect ? <i className="fas fa-check-circle text-green-500"></i> : <i className="fas fa-times-circle text-red-500"></i>}</div>
+                                        <div className="text-[10px] text-slate-400 mb-1">{t.q.kind === 'cloze' ? `${t.q.src.unitId}｜${t.q.src.category}` : `活用變化｜${t.q.src.formLabel}`}</div>
+                                        <div className="text-sm font-bold text-slate-800 pr-8 mb-1">{title}</div>
+                                        <div className="text-xs text-slate-500 mb-2">正解：<b className="text-green-700">{t.q.answer}</b>　有史以來錯 <b className="text-red-500">{s.wrong}</b> 次｜近 10 次錯 <b className="text-red-500">{recent10.filter(r => !r).length}</b> 次</div>
+                                        <div className="flex items-center bg-white p-2 rounded-lg border border-slate-100">
+                                            <span className="text-[10px] text-slate-400 mr-2 font-bold w-14">近10次軌跡</span>
+                                            <div className="flex gap-1">
+                                                {recent10.map((r, i) => <div key={i} className={`w-3 h-3 rounded-full ${r ? 'bg-green-400' : 'bg-red-400'} shadow-sm`}></div>)}
+                                                {Array.from({ length: 10 - recent10.length }).map((_, i) => <div key={'e' + i} className="w-3 h-3 rounded-full bg-slate-200"></div>)}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        <div className="flex gap-2 mt-auto">
+                            <button onClick={startGrammarExam} className="flex-1 py-4 bg-blue-600 text-white rounded-xl font-bold shadow-lg active:scale-95">再來一輪</button>
+                            <button onClick={() => { setShowSummary(false); setQs([]); setCurrentTab('grammar_exam_setup'); }} className="flex-1 py-4 bg-slate-800 text-white rounded-xl font-bold shadow-lg active:scale-95">返回設定</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            // ================= 測驗進行中 =================
+            const q = qs[qIdx];
+            if (!q) return null;
+            const src = q.src;
+            const wordInfo = q.kind === 'cloze' ? vocabIndex[src.targetWordId] : src.word;
+            const sentenceNode = q.kind === 'cloze' ? (() => {
+                const prefix = (src.sentence.match(/^【.*?】/) || [''])[0];
+                const body = src.sentence.slice(prefix.length);
+                const parts = body.split(BLANK);
+                const fill = picked === null ? <span className="inline-block min-w-[3rem] border-b-2 border-blue-400 text-blue-500 text-center">＿＿</span>
+                    : <span className={`inline-block px-1 border-b-2 font-bold ${!submitted ? 'border-blue-500 text-blue-600' : picked === q.answer ? 'border-green-500 text-green-600' : 'border-red-500 text-red-600'}`}>{picked}</span>;
+                return (
+                    <div>
+                        {prefix && <div className="text-xs text-amber-600 bg-amber-50 rounded-lg p-2 mb-2">{prefix}</div>}
+                        <div className="text-xl font-bold text-slate-800 leading-relaxed">{parts[0]}{fill}{parts[1]}</div>
+                    </div>
+                );
+            })() : <div className="text-lg font-bold text-slate-800 leading-relaxed">{src.prompt}</div>;
+
+            return (
+                <div className="flex flex-col flex-1">
+                    <div className="flex justify-between items-center mb-3">
+                        <div className="text-sm font-bold text-slate-500">進度：{qIdx + 1} / {qs.length}</div>
+                        <button onClick={() => { if (stopCurrentAudio) stopCurrentAudio(); setShowSummary(true); }} className="text-xs bg-red-50 text-red-600 px-3 py-1.5 rounded-full font-bold hover:bg-red-100 border border-red-200 active:scale-95 transition-all">
+                            <i className="fas fa-stop-circle mr-1"></i>提前結束
+                        </button>
+                    </div>
+                    <div className="bg-white rounded-2xl shadow-sm p-5 mb-3 border border-slate-100 relative">
+                        <div className="absolute top-3 right-3 flex items-center gap-3">
+                            <button onClick={() => toggleFavorite(q.id)} className="text-2xl hover:scale-110 active:scale-95 transition-transform">
+                                {favoriteIds.has(q.id) ? <i className="fas fa-heart text-red-500"></i> : <i className="far fa-heart text-slate-300 hover:text-red-400"></i>}
+                            </button>
+                            {submitted && <button onClick={() => speakText(q.speakStr, q.audioUrl)} className="text-xl text-slate-400 hover:text-blue-500"><i className="fas fa-volume-up"></i></button>}
+                        </div>
+                        <div className="flex flex-wrap gap-1 mb-3 pr-20">
+                            {q.kind === 'cloze' ? (
+                                <React.Fragment>
+                                    <span className="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">{src.vocabLevel}</span>
+                                    <span className="text-[10px] font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">{src.unitId}</span>
+                                    <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{src.category}</span>
+                                    <span className="text-[10px] font-bold bg-pink-50 text-pink-600 px-2 py-0.5 rounded-full">{src.tier}</span>
+                                </React.Fragment>
+                            ) : (
+                                <React.Fragment>
+                                    <span className="text-[10px] font-bold bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">活用變化</span>
+                                    <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{src.formLabel}</span>
+                                    <span className="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">{levelOfId(src.wordId)}</span>
+                                </React.Fragment>
+                            )}
+                        </div>
+                        {sentenceNode}
+                        {q.kind === 'conj' && wordInfo && <div className="text-xs text-slate-400 mt-2">{wordInfo.meaning}</div>}
+                        {submitted && q.kind === 'cloze' && <div className="text-sm text-slate-500 mt-3">{src.translation}</div>}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 mb-3">
+                        {q.options.map((opt, i) => {
+                            let cls = 'py-3 px-2 text-base rounded-xl border font-bold transition-all ';
+                            if (!submitted) cls += picked === opt ? 'bg-blue-100 border-blue-500 text-blue-700 shadow-sm' : 'bg-white text-slate-600 hover:bg-slate-50';
+                            else if (opt === q.answer) cls += 'bg-green-100 border-green-500 text-green-700';
+                            else if (opt === picked) cls += 'bg-red-100 border-red-500 text-red-700 line-through';
+                            else cls += 'bg-slate-50 text-slate-400 border-slate-200 opacity-60';
+                            return <button key={i} disabled={submitted} onClick={() => setPicked(opt)} className={cls}>{opt}</button>;
+                        })}
+                    </div>
+
+                    {submitted && (
+                        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 mb-3 text-sm">
+                            <div className={`font-bold mb-2 ${picked === q.answer ? 'text-green-600' : 'text-red-600'}`}>{picked === q.answer ? '✅ 答對了！' : `❌ 正解是「${q.answer}」`}</div>
+                            <div className="text-slate-700 whitespace-pre-line mb-2">{q.kind === 'cloze' ? src.explanation : src.rule}</div>
+                            <div className="text-xs text-blue-700 bg-blue-50 rounded-lg p-2 whitespace-pre-line">{q.kind === 'cloze' ? '🎵 Pitch：' + src.pitchHint : src.pitch}</div>
+                            {wordInfo && (
+                                <div className="text-xs text-slate-500 mt-2 border-t pt-2">
+                                    核心單字：<b className="text-slate-700">{wordInfo.kanji}</b>（{wordInfo.kana}）[{wordInfo.accent}] {wordInfo.meaning}
+                                    <button onClick={() => speakWord(wordInfo, false)} className="ml-2 text-slate-400 hover:text-blue-500"><i className="fas fa-volume-down"></i></button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {!submitted ? (
+                        <button onClick={submitAnswer} disabled={picked === null} className={`py-4 rounded-xl font-bold w-full mt-auto transition-all ${picked !== null ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>確認答案</button>
+                    ) : (
+                        <button onClick={nextQuestion} className="py-4 bg-slate-800 text-white rounded-xl font-bold w-full mt-auto shadow-lg hover:bg-slate-700">{qIdx + 1 < qs.length ? '下一題' : '查看總結'}</button>
+                    )}
+                </div>
+            );
+        }
+
         function App() {
+
             // 成績讀寫防護機制
             const loadStats = () => {
                 try {
@@ -117,6 +650,15 @@
 
             useEffect(() => localStorage.setItem('vocabLevels', JSON.stringify(selectedLevels)), [selectedLevels]);
             useEffect(() => localStorage.setItem('currentTab', currentTab), [currentTab]);
+
+            // 🏯 文法課程進度 ProgressMap：{ S01: { done: true, at: 時間戳 }, U03: {...} }
+            // 存在 localStorage('grammarProgressMap')；雲端同步會連同所有 localStorage 鍵一起備份至 Gist
+            const [grammarProgress, setGrammarProgress] = useState(() => {
+                try { return JSON.parse(localStorage.getItem('grammarProgressMap')) || {}; } catch (e) { return {}; }
+            });
+            useEffect(() => {
+                try { localStorage.setItem('grammarProgressMap', JSON.stringify(grammarProgress)); } catch (e) {}
+            }, [grammarProgress]);
 
             // --- 類別篩選器狀態 (加入記憶功能) ---
             const [selectedCategories, setSelectedCategories] = useState(() => {
@@ -520,6 +1062,7 @@
                     } catch(e) {}
                     currentAudioSourceRef.current = null;
                 }
+                try { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); } catch (e) {}
             };
 
             // 👉 切換 Tab 時自動停止所有音效與考試計時器，避免跨分頁背景跳題或殘響
@@ -550,58 +1093,97 @@
                 }
             };
 
-            const speak = async (targetWord, isFull = false) => {
-                const ctx = getAudioCtx();
-                if (isSpeakingRef.current) stopCurrentAudio();
+            // 🔊 雙層混合發音引擎：① 優先播放本地 ./audio/ MP3（Web Audio，保留 iOS 防卡死機制）
+            //                      ② fetch 失敗（動態活用變化、剛新增尚未生成音檔的題目）→ 自動 fallback 瀏覽器 speechSynthesis
+            const warnedFileProtocolRef = React.useRef(false);
 
+            const speakTTS = (text) => new Promise(resolve => {
+                try {
+                    if (!text || !('speechSynthesis' in window)) return resolve(false);
+                    const u = new SpeechSynthesisUtterance(text);
+                    u.lang = 'ja-JP';
+                    u.rate = playbackRateRef.current; // 套用側邊欄語速
+                    try {
+                        const jaVoice = (window.speechSynthesis.getVoices() || []).find(v => v.lang && v.lang.replace('_', '-').toLowerCase().startsWith('ja'));
+                        if (jaVoice) u.voice = jaVoice;
+                    } catch (e) {}
+                    u.onend = () => resolve(true);
+                    u.onerror = () => resolve(false);
+                    window.speechSynthesis.cancel();
+                    window.speechSynthesis.speak(u);
+                } catch (e) { resolve(false); }
+            });
+
+            // 回傳 true＝MP3 成功播完；false＝找不到檔案或解碼失敗（交給 TTS）；null＝被中途取消
+            const playMp3 = async (url, seq, attempts = 3) => {
+                const ctx = getAudioCtx();
+                let response = null; let fetchSuccess = false;
+                for (let attempt = 1; attempt <= attempts; attempt++) {
+                    try { response = await fetch(url); if (response.ok) { fetchSuccess = true; break; } else if (attempts === 1) break; }
+                    catch (e) { if (attempt === attempts) break; await new Promise(r => setTimeout(r, 200)); }
+                }
+                if (!fetchSuccess) {
+                    if (window.location.protocol === 'file:' && !warnedFileProtocolRef.current) {
+                        warnedFileProtocolRef.current = true;
+                        console.warn('⚠️ 單機模式 (file://) 無法讀取音檔，已改用瀏覽器內建語音；請上傳至 GitHub Pages 以使用 MP3。');
+                    }
+                    return false;
+                }
+                if (speakSequenceIdRef.current !== seq) return null;
+                try {
+                    const arrayBuffer = await response.arrayBuffer();
+                    // 👉 防護 2-2：強制捕捉 Safari 解碼器的同步崩潰
+                    const audioBuffer = await new Promise((res, rej) => {
+                        try { ctx.decodeAudioData(arrayBuffer, res, rej); }
+                        catch (e) { rej(e); }
+                    });
+                    if (speakSequenceIdRef.current !== seq) return null;
+                    await new Promise(resolve => {
+                        const source = ctx.createBufferSource();
+                        source.buffer = audioBuffer;
+                        source.playbackRate.value = playbackRateRef.current; // 👉 應用當前語速
+                        source.connect(ctx.destination);
+                        currentAudioSourceRef.current = source;
+                        source.onended = resolve;
+                        source.start(0);
+                    });
+                    return true;
+                } catch (e) { console.warn(`語音播放失敗，改用 TTS: ${url}`, e); return false; }
+            };
+
+            // items: [{ url, text }]
+            const playItems = async (items, attempts) => {
+                getAudioCtx();
+                if (isSpeakingRef.current) stopCurrentAudio();
                 setIsSpeaking(true);
                 isSpeakingRef.current = true;
                 const currentSeq = ++speakSequenceIdRef.current;
-
-                const playQueue = [`./audio/${targetWord.id}_ja.mp3`];
-                if (isFull && targetWord.example) playQueue.push(`./audio/${targetWord.id}_ex_ja.mp3`);
-
-                for (const url of playQueue) {
+                for (const item of items) {
                     if (speakSequenceIdRef.current !== currentSeq) break;
-                    try {
-                        let response = null; let fetchSuccess = false;
-                        for (let attempt = 1; attempt <= 3; attempt++) {
-                            try { response = await fetch(url); if (response.ok) { fetchSuccess = true; break; } }
-                            catch (e) { if (attempt === 3) break; await new Promise(r => setTimeout(r, 200)); }
-                        }
-                        if (!fetchSuccess) {
-                            if (window.location.protocol === 'file:') {
-                                alert("⚠️ Safari 安全限制警告\n\niOS Safari 嚴格禁止在單機模式 (file://) 下讀取音檔。\n請上傳至 GitHub Pages 上測試。");
-                                break;
-                            }
-                            continue;
-                        }
-
-                        const arrayBuffer = await response.arrayBuffer();
-                        // 👉 防護 2-2：強制捕捉 Safari 解碼器的同步崩潰
-                        const audioBuffer = await new Promise((res, rej) => {
-                            try { ctx.decodeAudioData(arrayBuffer, res, rej); }
-                            catch (e) { rej(e); }
-                        });
-                        if (speakSequenceIdRef.current !== currentSeq) break;
-
-                        await new Promise(resolve => {
-                            const source = ctx.createBufferSource();
-                            source.buffer = audioBuffer;
-                            source.playbackRate.value = playbackRateRef.current; // 👉 應用當前語速
-                            source.connect(ctx.destination);
-                            currentAudioSourceRef.current = source;
-                            source.onended = resolve;
-                            source.start(0);
-                        });
-                    } catch (e) { console.warn(`語音播放失敗略過: ${url}`, e); }
+                    let ok = item.url ? await playMp3(item.url, currentSeq, attempts) : false;
+                    if (speakSequenceIdRef.current !== currentSeq) break;
+                    if (ok === false) await speakTTS(item.text);
                 }
-
                 if (speakSequenceIdRef.current === currentSeq) {
                     setIsSpeaking(false);
                     isSpeakingRef.current = false;
                 }
             };
+
+            const speak = async (targetWord, isFull = false) => {
+                const items = [{ url: `./audio/${targetWord.id}_ja.mp3`, text: targetWord.kana || targetWord.kanji }];
+                if (isFull && targetWord.example) {
+                    items.push({ url: `./audio/${targetWord.id}_ex_ja.mp3`, text: targetWord.example.split(/\s*[\[(]/)[0] });
+                }
+                await playItems(items, 3);
+            };
+
+            // 文法例句／題目／活用變化發音：url 可為 null（動態生成的活用變化題直接走 TTS）
+            const speakText = async (text, url) => {
+                const clean = (text || '').replace(/【.*?】/g, '').replace(/[〇～]/g, '').trim();
+                await playItems([{ url: url || null, text: clean }], 1);
+            };
+
 
             // 升級統計更新邏輯，加入近 10 次歷史紀錄
             const updateStats = (id, isCorrect) => {
@@ -1147,23 +1729,25 @@
                         )}
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v4.14</span></h1>
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v5.0 文法版</span></h1>
                                 <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
                                     <i className="fas fa-download mr-1"></i>匯出紀錄
                                 </button>
                             </div>
 
                             {/* 👉 修改：加入側邊欄按鈕，並重新排列 Tab */}
-                            <div className="flex border-t items-stretch bg-slate-50">
+                            <div className="flex border-t items-stretch bg-slate-50 overflow-x-auto">
                                 <button
                                     onClick={() => setShowSidebar(true)}
                                     className="w-14 flex-shrink-0 bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700 transition-colors shadow-inner"
                                 >
                                     <i className="fas fa-cog text-xl"></i>
                                 </button>
-                                <button onClick={() => setCurrentTab('study')} className={`flex-1 py-3 text-sm tab-btn ${currentTab === 'study' ? 'active bg-white' : 'text-slate-500'}`}>學習模式</button>
-                                <button onClick={() => setCurrentTab('listening')} className={`flex-1 py-3 text-sm tab-btn ${currentTab === 'listening' ? 'active bg-white' : 'text-slate-500'}`}>聽力模式</button>
-                                <button onClick={() => setCurrentTab('exam_setup')} className={`flex-1 py-3 text-sm tab-btn ${currentTab.startsWith('exam') ? 'active bg-white' : 'text-slate-500'}`}>考試模式</button>
+                                <button onClick={() => setCurrentTab('study')} className={`flex-1 min-w-fit px-3 whitespace-nowrap py-3 text-sm tab-btn ${currentTab === 'study' ? 'active bg-white' : 'text-slate-500'}`}>學習模式</button>
+                                <button onClick={() => setCurrentTab('listening')} className={`flex-1 min-w-fit px-3 whitespace-nowrap py-3 text-sm tab-btn ${currentTab === 'listening' ? 'active bg-white' : 'text-slate-500'}`}>聽力模式</button>
+                                <button onClick={() => setCurrentTab('exam_setup')} className={`flex-1 min-w-fit px-3 whitespace-nowrap py-3 text-sm tab-btn ${currentTab.startsWith('exam') ? 'active bg-white' : 'text-slate-500'}`}>考試模式</button>
+                                <button onClick={() => setCurrentTab('grammar_course')} className={`flex-1 min-w-fit px-3 whitespace-nowrap py-3 text-sm tab-btn ${currentTab === 'grammar_course' ? 'active bg-white' : 'text-slate-500'}`}>🏯 文法課程</button>
+                                <button onClick={() => setCurrentTab(currentTab === 'grammar_exam' ? 'grammar_exam' : 'grammar_exam_setup')} className={`flex-1 min-w-fit px-3 whitespace-nowrap py-3 text-sm tab-btn ${currentTab.startsWith('grammar_exam') ? 'active bg-white' : 'text-slate-500'}`}>✍️ 文法測驗</button>
                             </div>
                         </div>
 
@@ -2028,7 +2612,27 @@
                                     </div>
                                 );
                             })()}
+
+                            {currentTab.startsWith('grammar') && (
+                                <GrammarModule
+                                    currentTab={currentTab}
+                                    setCurrentTab={setCurrentTab}
+                                    selectedLevels={selectedLevels}
+                                    currentVocabList={currentVocabList}
+                                    stats={stats}
+                                    updateStats={updateStats}
+                                    favoriteIds={favoriteIds}
+                                    toggleFavorite={toggleFavorite}
+                                    speakText={speakText}
+                                    speakWord={speak}
+                                    stopCurrentAudio={stopCurrentAudio}
+                                    grammarProgress={grammarProgress}
+                                    setGrammarProgress={setGrammarProgress}
+                                    setShowSidebar={setShowSidebar}
+                                />
+                            )}
                         </div>
+
                     </div>
                 </React.Fragment>
             );
