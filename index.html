@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
@@ -98,10 +98,19 @@
             return <GrammarInner {...props} />;
         }
 
+        // 穩定的元件（定義在 GrammarInner 外，避免每次 render 重新 mount 造成頁面跳回頂端）
+        const Card = ({ children, className }) => <div className={`bg-white rounded-2xl shadow-sm border border-slate-100 p-4 mb-3 ${className || ''}`}>{children}</div>;
+        const SpeakBtn = ({ text, url }) => (
+            <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (window.__grammarSpeakText) window.__grammarSpeakText(text, url); }} className="text-slate-400 hover:text-blue-500 active:scale-90 transition-all px-1">
+                <i className="fas fa-volume-up"></i>
+            </button>
+        );
+
         function GrammarInner(props) {
             const { currentTab, setCurrentTab, selectedLevels, currentVocabList, stats, updateStats, favoriteIds, toggleFavorite,
                     speakText, speakWord, stopCurrentAudio, grammarProgress, setGrammarProgress, setShowSidebar } = props;
             const G = window.GRAMMAR_DB, E = window.ConjugationEngine;
+            window.__grammarSpeakText = speakText; // 供模組層級 SpeakBtn 使用（避免元件在 render 內重建導致捲動重置）
 
             // ---------- 共用：單字索引 ----------
             const vocabIndex = useMemo(() => {
@@ -229,12 +238,6 @@
             };
 
             // ---------- 共用 UI 片段 ----------
-            const Card = ({ children, className }) => <div className={`bg-white rounded-2xl shadow-sm border border-slate-100 p-4 mb-3 ${className || ''}`}>{children}</div>;
-            const SpeakBtn = ({ text, url }) => (
-                <button onClick={(e) => { e.stopPropagation(); speakText(text, url); }} className="text-slate-400 hover:text-blue-500 active:scale-90 transition-all px-1">
-                    <i className="fas fa-volume-up"></i>
-                </button>
-            );
             const renderTable = (t) => (
                 <div className="overflow-x-auto my-2 border border-slate-200 rounded-lg">
                     <table className="min-w-full text-xs">
@@ -1097,32 +1100,70 @@
             //                      ② fetch 失敗（動態活用變化、剛新增尚未生成音檔的題目）→ 自動 fallback 瀏覽器 speechSynthesis
             const warnedFileProtocolRef = React.useRef(false);
 
-            const speakTTS = (text) => new Promise(resolve => {
+            const ttsKeepRef = React.useRef([]); // 持有 utterance 參照，避免 Chrome 垃圾回收導致 onend 不觸發、後續無聲
+            const speakTTS = (text, seq) => new Promise(resolve => {
                 try {
                     if (!text || !('speechSynthesis' in window)) return resolve(false);
+                    const synth = window.speechSynthesis;
                     const u = new SpeechSynthesisUtterance(text);
                     u.lang = 'ja-JP';
                     u.rate = playbackRateRef.current; // 套用側邊欄語速
                     try {
-                        const jaVoice = (window.speechSynthesis.getVoices() || []).find(v => v.lang && v.lang.replace('_', '-').toLowerCase().startsWith('ja'));
+                        const jaVoice = (synth.getVoices() || []).find(v => v.lang && v.lang.replace('_', '-').toLowerCase().startsWith('ja'));
                         if (jaVoice) u.voice = jaVoice;
                     } catch (e) {}
-                    u.onend = () => resolve(true);
-                    u.onerror = () => resolve(false);
-                    window.speechSynthesis.cancel();
-                    window.speechSynthesis.speak(u);
+                    let done = false;
+                    const finish = (ok) => {
+                        if (done) return; done = true;
+                        clearTimeout(watchdog);
+                        ttsKeepRef.current = ttsKeepRef.current.filter(x => x !== u);
+                        resolve(ok);
+                    };
+                    // 保險：onend 若未觸發（瀏覽器 bug），依文字長度估算時間後強制結束
+                    const watchdog = setTimeout(() => { try { synth.cancel(); } catch (e) {} finish(true); }, Math.max(3000, text.length * 450 / (playbackRateRef.current || 1)) + 1500);
+                    u.onend = () => finish(true);
+                    u.onerror = () => finish(false);
+                    ttsKeepRef.current.push(u);
+                    // Chrome：cancel() 後立刻 speak() 會被吞掉，需稍等再說；並先 resume() 解除卡住的暫停狀態
+                    if (synth.speaking || synth.pending || synth.paused) synth.cancel();
+                    setTimeout(() => {
+                        if (seq !== undefined && speakSequenceIdRef.current !== seq) return finish(true);
+                        try { synth.resume(); } catch (e) {}
+                        synth.speak(u);
+                    }, 80);
                 } catch (e) { resolve(false); }
             });
-
+            const mp3CacheRef = React.useRef(new Map());
+            const fetchMp3Bytes = (url, attempts = 1) => {
+                const cache = mp3CacheRef.current;
+                if (cache.has(url)) return cache.get(url);
+                const p = (async () => {
+                    for (let attempt = 1; attempt <= attempts; attempt++) {
+                        try {
+                            const r = await fetch(url);
+                            if (r.ok) return await r.arrayBuffer();
+                            try { await r.arrayBuffer(); } catch (e) {}
+                            if (r.status === 404) return null;
+                        } catch (e) {}
+                        if (attempt < attempts) await new Promise(r => setTimeout(r, 200));
+                    }
+                    cache.delete(url); // 暫時性失敗不快取，下次可重試
+                    return null;
+                })();
+                cache.set(url, p);
+                p.then(v => { if (v === null && cache.get(url) === p) cache.delete(url); });
+                return p;
+            };
             // 回傳 true＝MP3 成功播完；false＝找不到檔案或解碼失敗（交給 TTS）；null＝被中途取消
             const playMp3 = async (url, seq, attempts = 3) => {
                 const ctx = getAudioCtx();
-                let response = null; let fetchSuccess = false;
-                for (let attempt = 1; attempt <= attempts; attempt++) {
-                    try { response = await fetch(url); if (response.ok) { fetchSuccess = true; break; } else if (attempts === 1) break; }
-                    catch (e) { if (attempt === attempts) break; await new Promise(r => setTimeout(r, 200)); }
-                }
-                if (!fetchSuccess) {
+                try { if (ctx.state !== 'running') await Promise.race([ctx.resume(), new Promise(r => setTimeout(r, 400))]); } catch (e) {}
+                // 位元組快取＋去重：同一個 URL 只 fetch 一次，且「一定讀完 body」，
+                // 避免被中斷的請求留下未讀完的連線佔滿瀏覽器同網域連線數（造成之後每一輪都越來越慢、最後無聲）
+                // 伺服器回應過慢（>1.5 秒）時先改用 TTS 發音，MP3 仍在背景載入並快取，下次可直接播放
+                const bytes = await Promise.race([fetchMp3Bytes(url, attempts), new Promise(r => setTimeout(() => r(undefined), 1500))]);
+                if (bytes === undefined) return false;
+                if (!bytes) {
                     if (window.location.protocol === 'file:' && !warnedFileProtocolRef.current) {
                         warnedFileProtocolRef.current = true;
                         console.warn('⚠️ 單機模式 (file://) 無法讀取音檔，已改用瀏覽器內建語音；請上傳至 GitHub Pages 以使用 MP3。');
@@ -1131,8 +1172,7 @@
                 }
                 if (speakSequenceIdRef.current !== seq) return null;
                 try {
-                    const arrayBuffer = await response.arrayBuffer();
-                    // 👉 防護 2-2：強制捕捉 Safari 解碼器的同步崩潰
+                    const arrayBuffer = bytes.slice(0); // decodeAudioData 會 detach 傳入的 buffer，故用複本                    // 👉 防護 2-2：強制捕捉 Safari 解碼器的同步崩潰
                     const audioBuffer = await new Promise((res, rej) => {
                         try { ctx.decodeAudioData(arrayBuffer, res, rej); }
                         catch (e) { rej(e); }
@@ -1144,7 +1184,10 @@
                         source.playbackRate.value = playbackRateRef.current; // 👉 應用當前語速
                         source.connect(ctx.destination);
                         currentAudioSourceRef.current = source;
-                        source.onended = resolve;
+                        let finished = false;
+                        const fin = () => { if (finished) return; finished = true; clearTimeout(guard); resolve(); };
+                        source.onended = fin;
+                        const guard = setTimeout(fin, (audioBuffer.duration / (playbackRateRef.current || 1)) * 1000 + 1500); // onended 保險
                         source.start(0);
                     });
                     return true;
@@ -1162,7 +1205,7 @@
                     if (speakSequenceIdRef.current !== currentSeq) break;
                     let ok = item.url ? await playMp3(item.url, currentSeq, attempts) : false;
                     if (speakSequenceIdRef.current !== currentSeq) break;
-                    if (ok === false) await speakTTS(item.text);
+                    if (ok === false) await speakTTS(item.text, currentSeq);
                 }
                 if (speakSequenceIdRef.current === currentSeq) {
                     setIsSpeaking(false);
@@ -1206,6 +1249,9 @@
                 if (currentTab === 'exam' && examConfig.type === 'listening' && !showSummary && examQuestions.length > 0) {
                     const word = examQuestions[examIndex].word;
                     speak(word, true); // 自動播日文單字 + 例句
+                    // 預先載入下一題音檔，降低伺服器延遲影響
+                    const nx = examQuestions[examIndex + 1];
+                    if (nx) { fetchMp3Bytes('./audio/' + nx.word.id + '_ja.mp3'); fetchMp3Bytes('./audio/' + nx.word.id + '_ex_ja.mp3'); }
                 }
             }, [examIndex, currentTab, examConfig.type, showSummary]);
 
@@ -1729,7 +1775,7 @@
                         )}
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v5.0 文法版</span></h1>
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v5.1 文法版</span></h1>
                                 <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
                                     <i className="fas fa-download mr-1"></i>匯出紀錄
                                 </button>
