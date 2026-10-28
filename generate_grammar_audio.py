@@ -15,7 +15,14 @@ generate_grammar_audio.py
   python generate_grammar_audio.py              # 只生成「尚未存在」的檔案
   python generate_grammar_audio.py --force      # 全部重新生成
   python generate_grammar_audio.py --only CLOZE # 只生成檔名以 CLOZE 開頭者
-  python generate_grammar_audio.py --dry-run    # 只列出將生成的清單
+  python generate_grammar_audio.py --dry-run    # 只列出將生成的清單（含因 tts_overrides.json 變動而要重生的檔案）
+
+修改 tts_overrides.json 後直接重跑即可：只會重生「受影響」的 MP3（audio/tts_manifest.json 記錄上次用的文字），
+其餘不動；覆寫被移除時也會自動還原。不需要 --force。
+
+發音讀錯時：不要整句改平假名（重音/斷句會變差），請在 tts_overrides.json 加入覆寫，
+或在 grammar_DB.js 該題/例句物件加選填欄位 "ttsText"，再用 --force --only <檔名> 重新生成。
+詳見 tts_common.py 與 check_audio_whisper.py（用 Whisper 自動找出疑似讀錯的音檔）。
 
 前端 speak() 會優先播放這些 MP3；找不到時（例如新增題目還沒生成音檔、動態活用變化題）
 會自動 fallback 到瀏覽器 speechSynthesis，所以沒生成也不會壞掉。
@@ -31,6 +38,9 @@ try:
     import edge_tts
 except ImportError:  # 讓 --dry-run 在沒裝 edge-tts 時也能跑
     edge_tts = None
+
+from tts_common import load_overrides, resolve_tts_text, load_manifest, save_manifest, is_stale
+import io
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "grammar_DB.js")
@@ -67,37 +77,41 @@ def clean_text(s):
 
 
 def collect(db):
-    items = {}  # 檔名 -> 日文文字
+    items = {}  # 檔名 -> 日文原文（含漢字）
+    tts_fields = {}  # 檔名 -> 資料內的 ttsText 欄位（選填，可覆寫發音文字）
 
-    def put(rel_path, text, fallback_name):
+    def put(rel_path, text, fallback_name, tts_text=None):
         name = os.path.basename(rel_path) if rel_path else fallback_name
         text = clean_text(text)
         if text:
             items[name] = text
+            if tts_text:
+                tts_fields[name] = clean_text(tts_text)
 
     for q in db.get("clozeQuestions", []):
         filled = q["sentence"].replace(BLANK, q["answer"])
-        put(q.get("audio"), filled, q["id"] + ".mp3")
+        put(q.get("audio"), filled, q["id"] + ".mp3", q.get("ttsText"))
 
     for s in db.get("scenarios", []):
         for i, tier in enumerate(("tier1", "tier2", "tier3"), start=1):
             m = s.get("matrix", {}).get(tier)
             if m:
-                put(m.get("audio"), m["ja"], "%s_t%d.mp3" % (s["id"], i))
+                put(m.get("audio"), m["ja"], "%s_t%d.mp3" % (s["id"], i), m.get("ttsText"))
         for i, k in enumerate(s.get("receptiveKeigo", []), start=1):
-            put(k.get("audio"), k["ja"], "%s_k%d.mp3" % (s["id"], i))
+            put(k.get("audio"), k["ja"], "%s_k%d.mp3" % (s["id"], i), k.get("ttsText"))
 
     for u in db.get("vaultUnits", []):
         for si, sec in enumerate(u.get("sections", []), start=1):
             for ei, ex in enumerate(sec.get("examples", []), start=1):
-                put(ex.get("audio"), ex["ja"], "%s_s%d_e%d.mp3" % (u["id"], si, ei))
-    return items
+                put(ex.get("audio"), ex["ja"], "%s_s%d_e%d.mp3" % (u["id"], si, ei), ex.get("ttsText"))
+    return items, tts_fields
 
 
-async def synth(sem, text, path, rate):
+async def synth(sem, text, path, rate, manifest):
     async with sem:
         try:
             await edge_tts.Communicate(text, VOICE_JA, rate=rate).save(path)
+            manifest["grammar/" + os.path.basename(path)] = text  # 記錄實際餵給 TTS 的文字（供日後只重生受影響的檔案）
             print("🤖 生成 %-28s %s" % (os.path.basename(path), text))
             return True
         except Exception as e:  # noqa
@@ -115,13 +129,34 @@ async def main():
     ap.add_argument("--rate", default="+0%", help="edge-tts 語速，例如 -10%%（預設 +0%%；前端還有播放速度拉桿）")
     args = ap.parse_args()
 
-    items = collect(load_db(DB_FILE))
-    todo = {n: t for n, t in items.items()
-            if n.startswith(args.only) and (args.force or not os.path.exists(os.path.join(OUT_DIR, n)))}
-    print("📚 grammar_DB.js 共 %d 句，本次需生成 %d 句" % (len(items), len(todo)))
+    items, tts_fields = collect(load_db(DB_FILE))
+    overrides = load_overrides()  # tts_overrides.json：讀錯的詞／整句覆寫成平假名
+    # 實際餵給 TTS 的文字（預設＝含漢字原文，僅在有覆寫時才改）
+    # grammar_readings.json（generate_grammar_readings.py 產生）：整句平假名。words 替換會照這句自己的平假名換，避免被 words 的值帶偏
+    readings = {}
+    rpath = os.path.join(BASE_DIR, "grammar_readings.json")
+    if os.path.exists(rpath):
+        readings = json.load(io.open(rpath, encoding="utf-8-sig"))
+    spoken = {n: resolve_tts_text(n, t, overrides, tts_fields.get(n), readings.get(n)) for n, t in items.items()}
+    manifest = load_manifest()
+    # 需要生成：①檔案不存在 ②--force ③已存在但「現在要念的文字」≠「上次生成用的文字」（tts_overrides.json 有變動）
+    todo, stale = {}, {}
+    for n in items:
+        if not n.startswith(args.only):
+            continue
+        exists = os.path.exists(os.path.join(OUT_DIR, n))
+        if not exists or args.force:
+            todo[n] = spoken[n]
+        elif is_stale("grammar/" + n, items[n], spoken[n], manifest):
+            todo[n] = spoken[n]
+            stale[n] = (manifest.get("grammar/" + n, items[n]), spoken[n])
+    print("📚 grammar_DB.js 共 %d 句，本次需生成 %d 句（其中 %d 句是 tts_overrides.json 變動造成的重生）" % (len(items), len(todo), len(stale)))
     if args.dry_run:
         for n, t in todo.items():
-            print("  %-28s %s" % (n, t))
+            if n in stale:
+                print("  %-28s 🔁 %s  →  %s" % (n, stale[n][0], stale[n][1]))
+            else:
+                print("  %-28s %s" % (n, t))
         return
     if not todo:
         print("✅ 沒有需要生成的音檔")
@@ -130,7 +165,8 @@ async def main():
         sys.exit("請先安裝：pip install edge-tts")
     os.makedirs(OUT_DIR, exist_ok=True)
     sem = asyncio.Semaphore(CONCURRENCY)
-    results = await asyncio.gather(*[synth(sem, t, os.path.join(OUT_DIR, n), args.rate) for n, t in todo.items()])
+    results = await asyncio.gather(*[synth(sem, t, os.path.join(OUT_DIR, n), args.rate, manifest) for n, t in todo.items()])
+    save_manifest(manifest)
     print("🎉 完成：成功 %d / 失敗 %d" % (sum(results), len(results) - sum(results)))
 
 

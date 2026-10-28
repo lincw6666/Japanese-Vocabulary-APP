@@ -5,22 +5,40 @@ import re
 import asyncio
 import requests
 import edge_tts
+from tts_common import load_overrides, resolve_tts_text, load_manifest, save_manifest, is_stale
+import sys
 
 # --- 通用設定 ---
 AUDIO_DIR = "./audio"
 VOICE_JA = "ja-JP-NanamiNeural"      # 日文 AI 聲優 (七海)
 VOICE_ZH = "zh-TW-HsiaoChenNeural"   # 台灣中文 AI 聲優 (曉辰)
+MANIFEST = load_manifest()             # audio/tts_manifest.json：記錄每個 MP3 上次實際餵給 TTS 的文字
+DRY_RUN = "--dry-run" in sys.argv      # 只列出會生成／重生的檔案
+OVERRIDES = load_overrides()           # tts_overrides.json：讀錯的詞／整句覆寫（見 tts_common.py）
 
 # --- 核心功能 1：生成單純的 Edge TTS 音檔 ---
-async def generate_edge_tts(text, voice, output_path, desc):
+async def generate_edge_tts(text, voice, output_path, desc, reading=None):
     """如果檔案不存在，就使用 Edge TTS 生成音檔"""
-    if not text or os.path.exists(output_path):
-        return False  # 已存在或無文字，不生成
+    if not text:
+        return False
+    name = os.path.basename(output_path)
+    key = "vocab/" + name
+    # 日文才套用覆寫（中文意思不替換）；預設餵原文（含漢字），只有在 tts_overrides.json 有覆寫時才改用平假名
+    spoken = resolve_tts_text(name, text, OVERRIDES, reading=reading) if voice == VOICE_JA else text
+    if os.path.exists(output_path):
+        # 已存在：只有「現在要念的文字」≠「上次生成用的文字」（覆寫有變動）才重生，其餘不動
+        if not is_stale(key, text, spoken, MANIFEST):
+            return False
+        print(f"🔁 [覆寫變動→重生 {desc}] [{name}] {MANIFEST.get(key, text)} → {spoken}")
+    if DRY_RUN:
+        return True
+    text = spoken
 
     print(f"🤖 [生成 {desc}] [{output_path.split('/')[-1]}] {text}")
     try:
         communicate = edge_tts.Communicate(text, voice)
         await communicate.save(output_path)
+        MANIFEST[key] = text
         return True
     except Exception as e:
         print(f"❌ [{desc} 生成失敗]: {e}")
@@ -30,7 +48,15 @@ async def generate_edge_tts(text, voice, output_path, desc):
 async def get_word_ja_audio(word_id, kanji, kana):
     output_path = f"{AUDIO_DIR}/{word_id}_ja.mp3"
     if os.path.exists(output_path):
+        # 真人發音檔不動；只有 tts_overrides.json 的 files 明確指定此檔時，才改用 AI 重生
+        name = os.path.basename(output_path)
+        if OVERRIDES["files"].get(name):
+            return await generate_edge_tts(kana or kanji, VOICE_JA, output_path, "AI 日文單字")
         return False
+
+    if DRY_RUN:  # 試跑不連網
+        print(f"➕ [缺檔 單字] [{os.path.basename(output_path)}] {kanji} ({kana})")
+        return True
 
     # 第一關：嘗試呼叫真人發音字典 API
     url = f"https://assets.languagepod101.com/dictionary/japanese/audiomp3.php?kanji={kanji}&kana={kana}"
@@ -47,7 +73,8 @@ async def get_word_ja_audio(word_id, kanji, kana):
         print(f"⚠️ 真人語音網路請求失敗: {e}")
 
     # 第二關：如果沒有真人發音，用 AI 備援
-    return await generate_edge_tts(kanji, VOICE_JA, output_path, "AI 日文單字")
+    # 單字本身有明確讀音（kana 欄位），AI 備援直接唸假名，避免多音漢字讀錯（單字不涉及上下文，不影響重音判斷）
+    return await generate_edge_tts(kana or kanji, VOICE_JA, output_path, "AI 日文單字")
 
 # --- 輔助功能：精準拆解例句 (模擬 React 的邏輯) ---
 def parse_example(example_text):
@@ -70,6 +97,12 @@ def parse_example(example_text):
             pass
             
     return example_ja, example_zh
+
+def parse_reading(example_text):
+    """單字例句裡人工寫的整句平假名：「漢字句。[かんじ くの よみ。] (中文)」→ 「かんじ くの よみ。」（沒有則回傳 None）"""
+    m = re.search(r"\[(.*?)\]", example_text or "")
+    return m.group(1).strip() if m else None
+
 
 # --- 主程式 ---
 async def main():
@@ -127,7 +160,7 @@ async def main():
                 ex_ja, ex_zh = parse_example(example)
                 
                 ex_ja_path = f"{AUDIO_DIR}/{word_id}_ex_ja.mp3"
-                if await generate_edge_tts(ex_ja, VOICE_JA, ex_ja_path, "日文例句"):
+                if await generate_edge_tts(ex_ja, VOICE_JA, ex_ja_path, "日文例句", reading=parse_reading(example)):
                     new_files_count += 1
                     added_any = True
 
@@ -137,9 +170,11 @@ async def main():
                     added_any = True
 
             # 如果有下載任何檔案，暫停 0.5 秒防止被伺服器阻擋
-            if added_any:
+            if added_any and not DRY_RUN:
                 await asyncio.sleep(0.5)
 
+    if not DRY_RUN:
+        save_manifest(MANIFEST)
     print("-" * 40)
     print(f"🎉 執行完畢！\n掃描單字數: {total_words} 個\n新增音檔數: {new_files_count} 個")
 
