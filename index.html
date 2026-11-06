@@ -1769,16 +1769,20 @@
                                                 </div>
                                             </div>
                                         </div>
+
+                                        {/* 匯出紀錄 */}
+                                        <div className="mb-8">
+                                            <button onClick={exportData} className="w-full text-xs font-bold bg-slate-200 hover:bg-slate-300 py-3 rounded-lg text-slate-700 active:scale-95 transition-all">
+                                                <i className="fas fa-download mr-1"></i>匯出紀錄
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         )}
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v5.1 文法版</span></h1>
-                                <button onClick={exportData} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded text-slate-700">
-                                    <i className="fas fa-download mr-1"></i>匯出紀錄
-                                </button>
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v5.2 文法版</span></h1>
                             </div>
 
                             {/* 👉 修改：加入側邊欄按鈕，並重新排列 Tab */}
