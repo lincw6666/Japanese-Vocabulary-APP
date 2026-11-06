@@ -34,11 +34,12 @@
     { id: 'GR_SURU', kanji: 'する', kana: 'する', meaning: '做', accent: 0, notes: '第三類動詞', categories: ['動詞'], synthetic: true, level: 'N5' }
   ];
 
-  var VERB_FORMS = ['masu', 'te', 'ta', 'nai', 'vol', 'pot', 'ba', 'sugi'];
+  var VERB_FORMS = ['masu', 'te', 'ta', 'nai', 'vol', 'pot', 'ba', 'sugi', 'pass', 'caus', 'imp', 'proh'];
   var ADJ_FORMS = ['pos', 'neg', 'past', 'pastneg', 'te', 'adv', 'sugi'];
   var NOUN_FORMS = ['pos', 'neg', 'past', 'pastneg', 'te'];
   var LABELS = {
     masu: 'ます形', te: 'て形', ta: 'た形', nai: 'ない形', vol: '意向形', pot: '可能形', ba: '條件形(ば)', sugi: '過載形(＋すぎ)',
+    pass: '受身形(被動)', caus: '使役形', imp: '命令形', proh: '禁止形',
     pos: '現在肯定', neg: '現在否定', past: '過去肯定', pastneg: '過去否定', adv: '副詞化修飾動詞'
   };
   function formLabel(type, f) {
@@ -155,17 +156,17 @@
     var t = c.type, w = c.written, r = c.reading;
     if (t === 'v2') {
       var sw = cut(w), sr = cut(r);
-      var m2 = { masu: 'ます', te: 'て', ta: 'た', nai: 'ない', vol: 'よう', pot: 'られる', ba: 'れば', sugi: 'すぎ' };
+      var m2 = { masu: 'ます', te: 'て', ta: 'た', nai: 'ない', vol: 'よう', pot: 'られる', ba: 'れば', sugi: 'すぎ', pass: 'られる', caus: 'させる', imp: 'ろ', proh: 'るな' };
       return pack(sw + m2[form], sr + m2[form]);
     }
     if (t === 'v1') return conjV1(c, form);
     if (t === 'v3') {
       if (c.sub === 'kuru') {
-        var rd = { masu: 'き', te: 'き', ta: 'き', nai: 'こ', vol: 'こ', pot: 'こ', ba: 'く', sugi: 'き' }[form];
-        var sf = { masu: 'ます', te: 'て', ta: 'た', nai: 'ない', vol: 'よう', pot: 'られる', ba: 'れば', sugi: 'すぎ' }[form];
+        var rd = { masu: 'き', te: 'き', ta: 'き', nai: 'こ', vol: 'こ', pot: 'こ', ba: 'く', sugi: 'き', pass: 'こ', caus: 'こ', imp: 'こ', proh: 'く' }[form];
+        var sf = { masu: 'ます', te: 'て', ta: 'た', nai: 'ない', vol: 'よう', pot: 'られる', ba: 'れば', sugi: 'すぎ', pass: 'られる', caus: 'させる', imp: 'い', proh: 'るな' }[form];
         return { written: (c.kuruKanji ? '来' : rd) + sf, reading: rd + sf, kuruRead: rd, kuruSuffix: sf, kuruKanji: c.kuruKanji };
       }
-      var sru = { masu: 'します', te: 'して', ta: 'した', nai: 'しない', vol: 'しよう', pot: 'できる', ba: 'すれば', sugi: 'しすぎ' }[form];
+      var sru = { masu: 'します', te: 'して', ta: 'した', nai: 'しない', vol: 'しよう', pot: 'できる', ba: 'すれば', sugi: 'しすぎ', pass: 'される', caus: 'させる', imp: 'しろ', proh: 'するな' }[form];
       return pack(w + sru, r + sru);
     }
     if (t === 'i') {
@@ -203,6 +204,10 @@
       case 'pot': res = pack(sw + row[3] + 'る', sr + row[3] + 'る'); break;
       case 'ba': res = pack(sw + row[3] + 'ば', sr + row[3] + 'ば'); break;
       case 'sugi': res = pack(sw + row[0] + 'すぎ', sr + row[0] + 'すぎ'); break;
+      case 'pass': res = pack(sw + row[1] + 'れる', sr + row[1] + 'れる'); break;
+      case 'caus': res = pack(sw + row[1] + 'せる', sr + row[1] + 'せる'); break;
+      case 'imp': res = pack(sw + row[3], sr + row[3]); break;
+      case 'proh': res = pack(w + 'な', r + 'な'); break;
     }
     return res;
   }
@@ -244,6 +249,14 @@
         add(base + 'ば', sw + row[0] + 'ば', sw + row[1] + 'ば', sw + row[3] + 'れば', sw + 'れば');
       } else if (form === 'sugi') {
         add(base + 'すぎ', sw + row[1] + 'すぎ', sw + 'て' + 'すぎ', sw + row[0] + 'ますぎ', sw + row[3] + 'すぎ');
+      } else if (form === 'pass') {
+        add(sw + 'られる', sw + row[3] + 'れる', sw + row[0] + 'れる', sw + row[1] + 'られる', base + 'れる');
+      } else if (form === 'caus') {
+        add(sw + 'させる', sw + row[3] + 'せる', sw + row[0] + 'せる', base + 'させる', sw + row[1] + 'られる');
+      } else if (form === 'imp') {
+        add(sw + 'ろ', sw + row[0] + 'ろ', sw + row[1], base + 'ろ', sw + 'な');
+      } else if (form === 'proh') {
+        add(sw + 'るな', sw + 'ないで', sw + 'な', sw + row[1] + 'な', base + 'ないで');
       }
     } else if (t === 'v2') {
       var s = cut(w);
@@ -255,6 +268,10 @@
       if (form === 'pot') add(s + 'れる', s + 'させる', s + 'える', s + 'れられる', s + 'られた', s + 'らせる'); // 五段化 / 使役
       if (form === 'ba') add(s + 'るば', s + 'ば', s + 'れ', s + 'ればれ', s + 'らば');
       if (form === 'sugi') add(base + 'すぎ', s + 'ますぎ', s + 'てすぎ', s + 'らすぎ', s + 'いすぎ');
+      if (form === 'pass') add(s + 'れる', s + 'せられる', base + 'られる', s + 'らせる', s + 'え');
+      if (form === 'caus') add(s + 'らす', s + 'せる', base + 'させる', s + 'れる', s + 'ろ');
+      if (form === 'imp') add(s + 'れ', s + 'い', base + 'ろ', s + 'え', s + 'よ');
+      if (form === 'proh') add(s + 'ないで', s + 'な', s + 'ろな', base + 'ないで');
     } else if (t === 'v3') {
       if (c.sub === 'kuru') {
         var cur = conjugate(word, form);
@@ -266,7 +283,9 @@
         var bad = {
           masu: ['すます', 'しります', 'さます', 'せます'], te: ['すて', 'しって', 'せて', 'しんで'], ta: ['すた', 'しった', 'せた', 'しんだ'],
           nai: ['すない', 'せない', 'しらない', 'さない'], vol: ['すよう', 'しろう', 'せよう', 'しおう'], pot: ['すれる', 'しられる', 'できられる', 'せられる'],
-          ba: ['しれば', 'するば', 'しえば', 'せば'], sugi: ['すすぎ', 'しますぎ', 'するすぎ', 'しすぎる']
+          ba: ['しれば', 'するば', 'しえば', 'せば'], sugi: ['すすぎ', 'しますぎ', 'するすぎ', 'しすぎる'],
+          pass: ['しられる', 'すれる', 'せられる', 'されれる'], caus: ['しらせる', 'すせる', 'しさせる', 'させられる'],
+          imp: ['せよ', 'すれ', 'しな', 'すろ'], proh: ['しないで', 'すな', 'しるな', 'するないで']
         }[form] || [];
         bad.forEach(function (b) { add(pre + b); });
       }
@@ -383,9 +402,13 @@
       else if (form === 'vol') rule = '字尾「う段」跳兩格變「お段」＋う：' + word.kanji + ' ➔ ' + cj.written;
       else if (form === 'pot') rule = '字尾「う段」前進一格變「え段」＋る：' + word.kanji + ' ➔ ' + cj.written + '（對象助詞を ➔ が）';
       else if (form === 'ba') rule = '字尾「う段」前進一格變「え段」＋ば：' + word.kanji + ' ➔ ' + cj.written;
+      else if (form === 'pass') rule = '字尾「う段」前進一格變「あ段」＋れる：' + word.kanji + ' ➔ ' + cj.written + (e === 'う' ? '（⚠️ 尾音是う要變「われる」）' : '');
+      else if (form === 'caus') rule = '字尾「う段」前進一格變「あ段」＋せる：' + word.kanji + ' ➔ ' + cj.written + (e === 'う' ? '（⚠️ 尾音是う要變「わせる」）' : '');
+      else if (form === 'imp') rule = '字尾「う段」前進一格變「え段」：' + word.kanji + ' ➔ ' + cj.written;
+      else if (form === 'proh') rule = '動詞原形直接加上「な」：' + word.kanji + ' ➔ ' + cj.written;
       else rule = '先變ます形語幹（い段），拔掉ます直接接すぎ：' + word.kanji + ' ➔ ' + cj.written;
     } else if (t === 'v2') {
-      rule = { masu: '去掉「る」＋ます', te: '去掉「る」＋て', ta: '去掉「る」＋た', nai: '去掉「る」＋ない', vol: '去掉「る」＋よう', pot: '去掉「る」＋られる（口語常省略成「れる」＝ら抜き，但標準形是られる）；⚠️ 不要當五段處理', ba: '去掉「る」＋れば', sugi: '去掉「る」＋すぎ（先變ます形語幹）' }[form] + '：' + word.kanji + ' ➔ ' + cj.written;
+      rule = { masu: '去掉「る」＋ます', te: '去掉「る」＋て', ta: '去掉「る」＋た', nai: '去掉「る」＋ない', vol: '去掉「る」＋よう', pot: '去掉「る」＋られる（口語常省略成「れる」＝ら抜き，但標準形是られる）；⚠️ 不要當五段處理', ba: '去掉「る」＋れば', sugi: '去掉「る」＋すぎ（先變ます形語幹）', pass: '去掉「る」＋られる（被動）', caus: '去掉「る」＋させる（使役）', imp: '去掉「る」＋ろ（命令）', proh: '動詞原形＋な（禁止）' }[form] + '：' + word.kanji + ' ➔ ' + cj.written;
     } else if (t === 'v3') {
       if (c.sub === 'kuru') {
         rule = '来る 的漢字不變、假名會變：來（き）ます／來（き）て／來（こ）ない／來（こ）よう／來（こ）られる／來（く）れば。此處：' + displayOf(word, form) + '（' + cj.reading + '）';
@@ -420,7 +443,9 @@
         }
       } else if (form === 'nai') { var base = n - 2; est = accN === 0 ? 0 : base; note = accN === 0 ? '平板型活用後仍為平板型' : '有重音的動詞，ない 前一拍降調'; }
       else if (form === 'vol' || form === 'ba') { est = n - 1; note = form === 'vol' ? '意向形重音落在「う」前一拍' : 'ば 形重音落在「ば」前一拍'; }
-      else if (form === 'pot') { est = accN === 0 ? 0 : n - 1; note = accN === 0 ? '平板型動詞的可能形仍為平板型' : '可能形是一段動詞型，重音在倒數第二拍'; }
+      else if (form === 'pot' || form === 'pass' || form === 'caus') { est = accN === 0 ? 0 : n - 1; note = accN === 0 ? '平板型動詞活用後仍為平板型' : '一段動詞活用型，重音在倒數第二拍'; }
+      else if (form === 'imp') { est = accN === 0 ? 0 : 1; note = '命令形重音多落在第 1 拍或維持平板'; }
+      else if (form === 'proh') { est = accN; note = '原形加「な」，重音維持原動詞調值'; }
       else { return '🎵 原調值：' + orig + '\n🔁 活用提醒：すぎ 與動詞合成複合詞後，調值會依整體重新計算（原動詞的降調位置不再適用），請以音檔聽辨。'; }
     } else if (c.type === 'i') {
       if (form === 'pos') { est = accN; note = '原形'; }
@@ -448,6 +473,7 @@
   var ALL_FORM_KEYS = [
     { key: 'masu', label: 'ます形' }, { key: 'te', label: 'て形' }, { key: 'ta', label: 'た形' }, { key: 'nai', label: 'ない形' },
     { key: 'vol', label: '意向形' }, { key: 'pot', label: '可能形' }, { key: 'ba', label: '條件形(ば)' }, { key: 'sugi', label: '過載形(すぎ)' },
+    { key: 'pass', label: '受身形(被動)' }, { key: 'caus', label: '使役形' }, { key: 'imp', label: '命令形' }, { key: 'proh', label: '禁止形' },
     { key: 'pos', label: '形容詞現在肯定' }, { key: 'neg', label: '現在否定' }, { key: 'past', label: '過去肯定' }, { key: 'pastneg', label: '過去否定' }, { key: 'adv', label: '副詞化' }
   ];
 

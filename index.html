@@ -17,7 +17,7 @@
     <script src="vocab_N4.js" onerror="console.log('尚未建立 N4')"></script>
     <script src="vocab_N5.js" onerror="console.log('尚未建立 N5')"></script>
 
-    <!-- 文法資料庫（情境 S01~S08、心態寶典 U01~U12、挖空題庫）與詞類活用變化引擎 -->
+    <!-- 文法資料庫（情境 S01~S08、心態寶典 U01~U39、挖空題庫）與詞類活用變化引擎 -->
     <script src="grammar_DB.js" onerror="console.log('尚未建立 grammar_DB.js')"></script>
     <script src="conjugation_engine.js" onerror="console.log('尚未建立 conjugation_engine.js')"></script>
 
@@ -67,7 +67,7 @@
         };
 
         // =====================================================================
-        // 🏯 文法模組：文法課程 (S01~S08 / U01~U12) ＋ 文法測驗 (挖空 / 活用變化 / 混合)
+        // 🏯 文法模組：文法課程 (S01~S08 / U01~U39) ＋ 文法測驗 (挖空 / 活用變化 / 混合)
         // 資料：window.GRAMMAR_DB (grammar_DB.js)　引擎：window.ConjugationEngine (conjugation_engine.js)
         // 共用 App 的 selectedLevels / currentVocabList / stats / favoriteIds / speak 等狀態
         // =====================================================================
@@ -378,7 +378,7 @@
                             <div className="flex justify-between text-[11px] text-slate-500"><span>S 實戰情境 {sPct}%（{doneCount(G.scenarios)}/{G.scenarios.length}）</span><span>U 心態寶典 {uPct}%（{doneCount(G.vaultUnits)}/{G.vaultUnits.length}）</span></div>
                         </Card>
                         <div className="grid grid-cols-2 gap-2 mb-3">
-                            {[['S', '🚩 S01~S08 實戰情境'], ['U', '🧠 U01~U12 心態寶典']].map(k => (
+                            {[['S', '🚩 S01~S08 實戰情境'], ['U', '🧠 U01~U' + (G.vaultUnits ? G.vaultUnits.length : 39) + ' 心態寶典']].map(k => (
                                 <button key={k[0]} onClick={() => { setCourseKind(k[0]); setCourseId(k[0] === 'S' ? G.scenarios[0].id : G.vaultUnits[0].id); }}
                                     className={`py-2.5 rounded-xl text-sm font-bold border transition-all ${courseKind === k[0] ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white text-slate-500'}`}>{k[1]}</button>
                             ))}
@@ -412,7 +412,7 @@
                     <button key={key} onClick={onClick} className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all active:scale-95 ${on ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>{label}</button>
                 );
                 const modes = [['cloze', '① 例句挖空選擇題'], ['conj', '② 動詞/形容詞/名詞活用變化特訓'], ['mixed', '③ 混合實戰抽考']];
-                const presets = [['全部', []], ['動詞 8 變化', E.VERB_FORMS], ['形容詞四時態', E.ADJ4], ['只練 て形', ['te']], ['只練 可能形', ['pot']], ['只練 ない形', ['nai']]];
+                const presets = [['全部', []], ['動詞 12 變化', E.VERB_FORMS], ['被動・使役', ['pass', 'caus']], ['命令・禁止', ['imp', 'proh']], ['形容詞四時態', E.ADJ4], ['只練 て形', ['te']], ['只練 可能形', ['pot']], ['只練 ない形', ['nai']]];
                 return (
                     <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100" id="grammar_exam_setup">
                         <h2 className="text-lg font-bold mb-1 border-b pb-2"><i className="fas fa-sliders-h mr-2"></i>文法測驗設定</h2>
