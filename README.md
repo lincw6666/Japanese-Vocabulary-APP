@@ -41,3 +41,10 @@ For the best experience on iPad and iPhone, add the website to your **Home Scree
 * `conjugation_engine.js`：動詞 12 大活用變化（ます／て／た／ない／意向／可能／ば／すぎ／被動／使役／命令／禁止）、形容詞與名詞活用變化，依勾選級別單字自動產生活用題與智慧干擾項。
 * `generate_grammar_audio.py`：`pip install edge-tts` 後執行，將文法例句批次轉成 `./audio/grammar/*.mp3`；沒有 MP3 時前端自動改用瀏覽器 TTS。
 * 發音讀錯時：預設餵「含漢字原文」（保留重音與斷句），**不要整句改平假名**。用 `check_audio_whisper.py`（Whisper 聽寫比對）找出疑似讀錯的音檔，再把修正寫進 `tts_overrides.json`（`words` 詞級替換優先；`files` 整句最後手段；或在 `grammar_DB.js` 題目加選填 `ttsText`），然後直接重跑 `python generate_grammar_audio.py`（文法）與 `python download_audio.py`（單字例句）：只會重生「受 tts_overrides.json 影響」的 MP3（`audio/tts_manifest.json` 記錄各檔上次用的文字，不需要 `--force`；加 `--dry-run` 可先看清單）。`words` 以詞（形態素）邊界替換，需 `pip install fugashi unidic-lite`；單一漢字（如「日」「時」）讀法依語境而異，請勿輕易加入。單字 AI 備援已改唸 `kana`。文法例句的整句平假名由 `python generate_grammar_readings.py` 產生到 `grammar_readings.json`（可手改，改後重跑 `generate_grammar_audio.py` 會自動重生受影響的 MP3；`--check` 可檢查對齊），`words` 替換會照該句自己的平假名換。單字例句另可用 `python scan_reading_mismatch.py`（`--apply` 寫入單句專用的 `fileWords` 覆寫）比對「分析器預設讀法」與人工平假名，抓出 Whisper 抓不到的同字異讀（如 辛い つらい／からい）；報告 `reading_mismatch_report.md` 的 ⚠️ 項目多半是人工平假名打錯字，需人工確認。
+
+## 📦 離線語音包與 GitHub Pages 最佳化 (v5.3)
+* 為避免 17,500 個零碎 MP3 音檔造成 GitHub Pages 部署超時 (Timeout)，音訊改由 `python3 pack_audio_zips.py` 批次打包為 6 個依級別劃分的 Zip 壓縮檔（放於 `./audio_packages/`，總計約 185MB，每檔均小於 50MB）。
+* 前端透過輕量 `fflate.min.js` 與 `audio_manager.js`，支援在側邊欄一鍵於 WiFi 環境下載離線語音包至本機 `IndexedDB`。
+* 出門在外於公車、地鐵或無網路環境時，播放語音 **0 行動流量消耗**、0 延遲秒播；若未下載離線包，則自動以瀏覽器內建 Web Speech TTS 平滑替代。
+* 本機若重新生成或更新個別 MP3，只需執行 `python3 pack_audio_zips.py` 即可自動刷新 Zip 壓縮包。
+

@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 .DS_Store
 reports/
+
+# 零碎音檔改由 audio_packages/*.zip 打包部署，本機 mp3 保留但不進 git
+audio/*.mp3
+audio/**/*.mp3
+

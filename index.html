@@ -21,6 +21,10 @@
     <script src="grammar_DB.js" onerror="console.log('尚未建立 grammar_DB.js')"></script>
     <script src="conjugation_engine.js" onerror="console.log('尚未建立 conjugation_engine.js')"></script>
 
+    <!-- 離線語音包與解壓縮模組 (解決 GitHub Pages 檔案數超時問題，出門 0 流量發音) -->
+    <script src="fflate.min.js"></script>
+    <script src="audio_manager.js"></script>
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap');
         body { font-family: 'Noto Sans JP', 'Microsoft JhengHei', sans-serif; }
@@ -625,6 +629,69 @@
                 }
             }, [stats]);
 
+            // 📦 離線語音包狀態與進度管理 (IndexedDB)
+            const [offlineAudioStatus, setOfflineAudioStatus] = useState({});
+            const [offlineAudioProgress, setOfflineAudioProgress] = useState({});
+            const [isBatchDownloading, setIsBatchDownloading] = useState(false);
+
+            const refreshOfflineAudioStatus = async () => {
+                if (window.AudioManager) {
+                    try {
+                        const installed = await window.AudioManager.getInstalledPackages();
+                        setOfflineAudioStatus(installed);
+                    } catch (e) {}
+                }
+            };
+
+            useEffect(() => {
+                refreshOfflineAudioStatus();
+            }, []);
+
+            const handleDownloadPkg = async (pkgId) => {
+                if (!window.AudioManager) return;
+                try {
+                    setOfflineAudioProgress(prev => Object.assign({}, prev, { [pkgId]: { stage: 'downloading', percent: 0 } }));
+                    await window.AudioManager.installPackage(pkgId, (p) => {
+                        setOfflineAudioProgress(prev => Object.assign({}, prev, { [pkgId]: p }));
+                    });
+                    await refreshOfflineAudioStatus();
+                } catch (err) {
+                    alert('下載失敗: ' + (err.message || err));
+                } finally {
+                    setOfflineAudioProgress(prev => {
+                        const next = Object.assign({}, prev);
+                        delete next[pkgId];
+                        return next;
+                    });
+                }
+            };
+
+            const handleDeletePkg = async (pkgId) => {
+                if (!confirm('確定要清除此語音包嗎？清除後出門若無快取將改用瀏覽器內建語音發音。')) return;
+                if (!window.AudioManager) return;
+                try {
+                    await window.AudioManager.deletePackage(pkgId);
+                    await refreshOfflineAudioStatus();
+                } catch (err) {
+                    alert('清除失敗: ' + (err.message || err));
+                }
+            };
+
+            const handleDownloadAllPkgs = async () => {
+                if (!window.AudioManager || isBatchDownloading) return;
+                setIsBatchDownloading(true);
+                try {
+                    for (let i = 0; i < window.AudioManager.PACKAGES.length; i++) {
+                        const pkg = window.AudioManager.PACKAGES[i];
+                        if (!offlineAudioStatus[pkg.id]) {
+                            await handleDownloadPkg(pkg.id);
+                        }
+                    }
+                } finally {
+                    setIsBatchDownloading(false);
+                }
+            };
+
             const availableLevels = window.VOCAB_DB ? Object.keys(window.VOCAB_DB).sort() : [];
 
             // 👉 新增：全域語速控制與記憶
@@ -1138,6 +1205,15 @@
                 const cache = mp3CacheRef.current;
                 if (cache.has(url)) return cache.get(url);
                 const p = (async () => {
+                    // 1. 優先自 IndexedDB 本機離線快取取得（0 流量、0ms 延遲）
+                    try {
+                        if (window.AudioManager) {
+                            const idbBytes = await window.AudioManager.getAudioBytes(url);
+                            if (idbBytes) return idbBytes;
+                        }
+                    } catch (e) {}
+
+                    // 2. 本地開發或遠端網路串流 fallback
                     for (let attempt = 1; attempt <= attempts; attempt++) {
                         try {
                             const r = await fetch(url);
@@ -1721,6 +1797,78 @@
                                             </div>
                                         </div>
 
+                                        {/* 離線語音包 (WiFi 免流量) */}
+                                        <div className="mb-8">
+                                            <div className="flex justify-between items-center mb-3">
+                                                <h3 className="text-sm font-bold text-slate-500 flex items-center">
+                                                    <i className="fas fa-wifi text-emerald-500 mr-1.5"></i>離線語音包 (WiFi 免流量)
+                                                </h3>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleDownloadAllPkgs}
+                                                    disabled={isBatchDownloading}
+                                                    className="text-[11px] text-blue-600 hover:text-blue-800 font-bold disabled:text-slate-400 cursor-pointer"
+                                                >
+                                                    {isBatchDownloading ? '下載中...' : '全部下載'}
+                                                </button>
+                                            </div>
+                                            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100 flex flex-col gap-2.5">
+                                                <div className="text-[11px] text-slate-500 leading-relaxed mb-0.5">
+                                                    在家連 WiFi 下載一次，出門在公車、地鐵離線背單字 <b>0 流量消耗</b>、零延遲秒播。
+                                                </div>
+                                                {window.AudioManager && window.AudioManager.PACKAGES.map(function(pkg) {
+                                                    const isInstalled = !!offlineAudioStatus[pkg.id];
+                                                    const prog = offlineAudioProgress[pkg.id];
+                                                    return (
+                                                        <div key={pkg.id} className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between text-xs shadow-2xs">
+                                                            <div className="flex-1 min-w-0 pr-2">
+                                                                <div className="flex items-center gap-1.5 font-bold text-slate-700">
+                                                                    <span>{pkg.title}</span>
+                                                                    <span className="text-[10px] text-slate-400 font-normal">({pkg.size})</span>
+                                                                </div>
+                                                                <div className="text-[11px] text-slate-400 truncate mt-0.5">
+                                                                    {prog ? (
+                                                                        <span className="text-blue-600 font-bold">
+                                                                            <i className="fas fa-spinner fa-spin mr-1"></i>
+                                                                            {prog.stage === 'downloading' ? ('下載中 ' + prog.percent + '%') : prog.stage === 'unzipping' ? '解壓縮中...' : '儲存至本機...'}
+                                                                        </span>
+                                                                    ) : isInstalled ? (
+                                                                        <span className="text-emerald-600 font-medium">
+                                                                            <i className="fas fa-check-circle mr-1"></i>已就緒 ({offlineAudioStatus[pkg.id].count} 句)
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span>未下載 ({pkg.count} 句)</span>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                            <div>
+                                                                {prog ? (
+                                                                    <span className="px-2.5 py-1 text-[11px] font-bold text-slate-400 bg-slate-100 rounded">處理中</span>
+                                                                ) : isInstalled ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleDeletePkg(pkg.id)}
+                                                                        className="px-2.5 py-1 text-[11px] font-bold text-red-500 hover:bg-red-50 border border-red-200 rounded transition-colors active:scale-95 cursor-pointer"
+                                                                        title="清除以釋出空間"
+                                                                    >
+                                                                        清除
+                                                                    </button>
+                                                                ) : (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleDownloadPkg(pkg.id)}
+                                                                        className="px-3 py-1 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 rounded shadow-sm transition-all cursor-pointer"
+                                                                    >
+                                                                        <i className="fas fa-download mr-1"></i>下載
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+
                                         {/* GitHub 雲端同步 */}
                                         <div className="mb-8">
                                             <h3 className="text-sm font-bold text-slate-500 mb-3">雲端同步 (GitHub Gist API)</h3>
@@ -1782,7 +1930,7 @@
                         )}
                         <div className="bg-white shadow-sm sticky top-0 z-10">
                             <div className="p-4 flex justify-between items-center">
-                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v5.2 文法版</span></h1>
+                                <h1 className="text-xl font-bold text-slate-800">日文全方位自學 <span className="text-xs text-slate-400 font-normal">v5.3 離線語音版</span></h1>
                             </div>
 
                             {/* 👉 修改：加入側邊欄按鈕，並重新排列 Tab */}
