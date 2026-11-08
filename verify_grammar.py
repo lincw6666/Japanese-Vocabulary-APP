@@ -223,6 +223,20 @@ def run_verification():
             errors.append(f"{cid} answer '{answer}' is included in traps: {traps}")
             cloze_trap_errors += 1
 
+        # Question Leak Prevention Check (category & sentence instructions)
+        cat = q.get('category', '')
+        if answer in cat:
+            errors.append(f"{cid} answer '{answer}' leaked in category '{cat}'")
+            cloze_trap_errors += 1
+        for t in traps:
+            if t in cat:
+                errors.append(f"{cid} trap '{t}' leaked in category '{cat}'")
+                cloze_trap_errors += 1
+        for inst in re.findall(r'【(.*?)】', full):
+            if answer in inst:
+                errors.append(f"{cid} answer '{answer}' leaked in sentence instruction '【{inst}】'")
+                cloze_trap_errors += 1
+
         # TargetWordId check
         if not tid:
             errors.append(f"{cid} missing targetWordId")

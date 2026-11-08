@@ -60,6 +60,9 @@ testWords.forEach(function(w) {
     if (Object.keys(uniqueTraps).length !== 3) {
       throw new Error('Duplicate traps for ' + w.kanji + ' (' + f + ')');
     }
+    if (/\([ぁ-んァ-ン＋+]+\)/.test(q.formLabel) || /的「[^」]*\([ぁ-んァ-ン＋+]+\)[^」]*」/.test(q.prompt)) {
+      throw new Error('Answer leak detected in formLabel or prompt for ' + w.kanji + ' (' + f + ')');
+    }
 
     passedCount++;
   });

@@ -38,17 +38,13 @@
   var ADJ_FORMS = ['pos', 'neg', 'past', 'pastneg', 'te', 'adv', 'sugi'];
   var NOUN_FORMS = ['pos', 'neg', 'past', 'pastneg', 'te'];
   var LABELS = {
-    masu: 'ます形', te: 'て形', ta: 'た形', nai: 'ない形', vol: '意向形', pot: '可能形', ba: '條件形(ば)', sugi: '過載形(＋すぎ)',
+    masu: 'ます形', te: 'て形', ta: 'た形', nai: 'ない形', vol: '意向形', pot: '可能形', ba: '條件形', sugi: '過載形',
     pass: '受身形(被動)', caus: '使役形', imp: '命令形', proh: '禁止形',
     pos: '現在肯定', neg: '現在否定', past: '過去肯定', pastneg: '過去否定', adv: '副詞化修飾動詞'
   };
   function formLabel(type, f) {
-    if (f === 'te' && type !== 'v1' && type !== 'v2' && type !== 'v3') return type === 'i' ? 'て形中頓串接(くて)' : 'て形中頓串接(で)';
-    if (f === 'neg') return type === 'i' ? '現在否定(くない)' : '現在否定(じゃない)';
-    if (f === 'past') return type === 'i' ? '過去肯定(かった)' : '過去肯定(だった)';
-    if (f === 'pastneg') return type === 'i' ? '過去否定(くなかった)' : '過去否定(じゃなかった)';
-    if (f === 'adv') return type === 'i' ? '副詞化修飾動詞(く)' : '副詞化修飾動詞(に)';
-    return LABELS[f];
+    if (f === 'te' && type !== 'v1' && type !== 'v2' && type !== 'v3') return 'て形（中頓串接）';
+    return LABELS[f] || f;
   }
   function formsOf(type) {
     if (type === 'v1' || type === 'v2' || type === 'v3') return VERB_FORMS;
@@ -472,7 +468,7 @@
   // 所有可用的 formKey（供 UI 篩選器列舉）
   var ALL_FORM_KEYS = [
     { key: 'masu', label: 'ます形' }, { key: 'te', label: 'て形' }, { key: 'ta', label: 'た形' }, { key: 'nai', label: 'ない形' },
-    { key: 'vol', label: '意向形' }, { key: 'pot', label: '可能形' }, { key: 'ba', label: '條件形(ば)' }, { key: 'sugi', label: '過載形(すぎ)' },
+    { key: 'vol', label: '意向形' }, { key: 'pot', label: '可能形' }, { key: 'ba', label: '條件形' }, { key: 'sugi', label: '過載形' },
     { key: 'pass', label: '受身形(被動)' }, { key: 'caus', label: '使役形' }, { key: 'imp', label: '命令形' }, { key: 'proh', label: '禁止形' },
     { key: 'pos', label: '形容詞現在肯定' }, { key: 'neg', label: '現在否定' }, { key: 'past', label: '過去肯定' }, { key: 'pastneg', label: '過去否定' }, { key: 'adv', label: '副詞化' }
   ];
