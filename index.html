@@ -1298,8 +1298,33 @@
             };
 
             // 文法例句／題目／活用變化發音：url 可為 null（動態生成的活用變化題直接走 TTS）
+            // 【僅限地端】本機 Edge TTS（Nanami）：只有 localhost / 127.0.0.1 且由 serve_local.py 提供 /tts 時才啟用
+            // GitHub Pages 上沒有 /tts（404）或網域不符，會自動退回原本行為
+            const localTtsEnabled = () => ['localhost', '127.0.0.1'].includes(location.hostname) && localTtsAliveRef.current !== false;
+            const localTtsAliveRef = React.useRef(null);
+            const localTtsUrl = (text) => '/tts?text=' + encodeURIComponent(text);
+            const localTtsBytes = async (text) => {
+                const ck = 'localtts:' + text;
+                const cache = mp3CacheRef.current;
+                if (cache.has(ck)) return cache.get(ck);
+                const p = (async () => {
+                    try {
+                        const r = await fetch(localTtsUrl(text));
+                        if (!r.ok) { if (r.status === 404) localTtsAliveRef.current = false; return null; }
+                        localTtsAliveRef.current = true;
+                        return await r.arrayBuffer();
+                    } catch (e) { return null; }
+                })();
+                cache.set(ck, p);
+                p.then(v => { if (!v) cache.delete(ck); });
+                return p;
+            };
             const speakText = async (text, url) => {
                 const clean = (text || '').replace(/【.*?】/g, '').replace(/[〇～]/g, '').trim();
+                if (clean && !url && localTtsEnabled()) { // 只取代「沒有音檔」的活用變化題；挖空題仍用既有 Nanami 音檔
+                    const b = await localTtsBytes(clean);
+                    if (b) { await playItems([{ url: 'localtts:' + clean, text: clean }], 1); return; }
+                }
                 await playItems([{ url: url || null, text: clean }], 1);
             };
 

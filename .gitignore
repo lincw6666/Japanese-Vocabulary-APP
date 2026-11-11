@@ -8,3 +8,6 @@ reports/
 audio/*.mp3
 audio/**/*.mp3
 
+
+# 地端 Edge TTS 快取（serve_local.py 產生）
+audio_cache/
